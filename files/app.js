@@ -109,6 +109,7 @@ function bindAll() {
   q('#btnSync').addEventListener('click', syncSheet);
   q('#btnCSV').addEventListener('click', exportCSV);
   q('#btnClear').addEventListener('click', clearAll);
+  q('#btnRefreshCategories').addEventListener('click', refreshCategories);
   q('#btnExportRow').addEventListener('click', exportCSV);
   q('#btnClearRow').addEventListener('click', clearAll);
 
@@ -278,10 +279,12 @@ async function collectAuto() {
   if (!tab) { toast('⚠️ 쇼핑몰 주문내역 탭을 먼저 열어주세요'); return; }
   const is11st = tab.url.includes('11st.co.kr');
   const isNaver = tab.url.includes('naver.com');
-  if (!is11st && !isNaver) { toast('⚠️ 현재 전체 자동 수집은 11번가/네이버만 지원해요'); return; }
+  const isCoupang = tab.url.includes('coupang.com');
+  if (!is11st && !isNaver && !isCoupang) { toast('⚠️ 현재 전체 자동 수집은 11번가/네이버/쿠팡만 지원해요'); return; }
+  const store = is11st ? '11st' : isNaver ? 'naver' : 'coupang';
   const btn = q('#btnCollectAuto');
   btn.disabled = true;
-  try { await collectAllYears(tab, is11st ? '11st' : 'naver'); }
+  try { await collectAllYears(tab, store); }
   finally { btn.disabled = false; btn.textContent = '⟳ 전체 기간 자동 수집'; }
 }
 
@@ -299,15 +302,19 @@ async function collectAllYears(tab, store = '11st') {
 
     const url = store === 'naver'
       ? `https://shopping.naver.com/my/order?startDate=${year}-01-01&endDate=${year}-12-31`
-      : `https://buy.11st.co.kr/my11st/order/OrderList.tmall?shDateFrom=${year}0101&shDateTo=${year}1231&pageNumber=1&type=orderList2nd&ver=02`;
+      : store === 'coupang'
+        ? `https://mc.coupang.com/ssr/desktop/order/list?requestYear=${year}&pageIndex=0`
+        : `https://buy.11st.co.kr/my11st/order/OrderList.tmall?shDateFrom=${year}0101&shDateTo=${year}1231&pageNumber=1&type=orderList2nd&ver=02`;
 
     await chrome.tabs.update(tab.id, { url });
     await waitForTabLoad(tab.id);
-    await new Promise(r => setTimeout(r, 1200));
-    const initSel = store === 'naver'
-      ? '[class*="OrderProductBundle_order_card"],[class*="order_btn_more"]'
-      : 'tbody tr';
-    await waitForTabContent(tab.id, initSel, 10000);
+    await new Promise(r => setTimeout(r, store === 'coupang' ? 800 : 1200));
+    if (store !== 'coupang') {
+      const initSel = store === 'naver'
+        ? '[class*="OrderProductBundle_order_card"],[class*="order_btn_more"]'
+        : 'tbody tr';
+      await waitForTabContent(tab.id, initSel, 10000);
+    }
 
     let yearCount = 0;
     try {
@@ -335,6 +342,25 @@ async function collectAllYears(tab, store = '11st') {
         }
         yearCount = await injectCollector(tab.id, false);
         totalCount += yearCount;
+      } else if (store === 'coupang') {
+        let pageIndex = 0;
+        while (true) {
+          if (pageIndex > 0) {
+            const pageUrl = `https://mc.coupang.com/ssr/desktop/order/list?requestYear=${year}&pageIndex=${pageIndex}`;
+            await chrome.tabs.update(tab.id, { url: pageUrl });
+            await waitForTabLoad(tab.id);
+            await new Promise(r => setTimeout(r, 800));
+          }
+          const count = await injectCollector(tab.id, false);
+          yearCount += count; totalCount += count;
+          const [{ result: hasNext }] = await chrome.scripting.executeScript({
+            target: { tabId: tab.id }, func: () => !!window.__coupangHasNext
+          });
+          showProgress(`${year}년 ${pageIndex + 1}p`, pct, `${year}년 ${yearCount}건 · 누적 ${totalCount}건`);
+          btn.textContent = `⏳ ${year}년 p${pageIndex + 1} (누적 ${totalCount}건)`;
+          if (!hasNext) break;
+          pageIndex++;
+        }
       } else {
         // 11번가: 페이지별 순회
         let totalPages = 1;
@@ -519,22 +545,32 @@ function runCollector(allPages) {
 
   // ── 쿠팡 ──────────────────────────────────────────────────────────────────
   function collectCoupang() {
+    const el = document.getElementById('__NEXT_DATA__');
+    const nextData = el ? JSON.parse(el.textContent) : null;
+    const data = nextData?.props?.pageProps?.domains?.desktopOrder;
+    window.__coupangHasNext = data?.orderPagination?.hasNext ?? false;
+    if (!data?.orderList?.length) return [];
     const result = [];
-    const nameEls = document.querySelectorAll('[class*="productName"],[class*="product-name"],[class*="prodName"],[class*="itemName"]');
-    const priceEls = document.querySelectorAll('[class*="totalPrice"],[class*="total-price"],[class*="payPrice"],[class*="pay-price"]');
-    const dateEls = document.querySelectorAll('[class*="orderDate"],[class*="order-date"],[class*="orderedDate"]');
-    nameEls.forEach((el, i) => {
-      const name = el.textContent.trim();
-      if (!name || name.length < 3) return;
-      const price = parseInt((priceEls[i]?.textContent || '').replace(/[^0-9]/g, '')) || 0;
-      if (!price) return;
-      const dateStr = dateEls[Math.min(i, dateEls.length - 1)]?.textContent.trim() || '';
-      result.push({
-        store: 'coupang', name, price, date: parseDate(dateStr),
-        orderId: String(Math.abs(('cp' + name + price).split('').reduce((h, c) => Math.imul(31, h) + c.charCodeAt(0) | 0, 0))),
-        category: getCategory(name), collectedAt: new Date().toISOString()
-      });
-    });
+    for (const order of data.orderList) {
+      const orderId = String(order.orderId);
+      const date = order.orderedAt
+        ? new Date(order.orderedAt).toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+      for (const group of order.deliveryGroupList || []) {
+        for (const product of group.productList || []) {
+          const name = product.vendorItemName || product.productName || '';
+          const price = product.discountedUnitPrice ?? product.combinedUnitPrice ?? 0;
+          if (!name || !price) continue;
+          const cancelled = order.allCanceled || group.allCanceled || product.allCanceled
+            || product.cancelReturnStatus != null;
+          result.push({
+            store: 'coupang', name, price, date, orderId,
+            category: cancelled ? '취소/반품' : getCategory(name),
+            collectedAt: new Date().toISOString()
+          });
+        }
+      }
+    }
     return result;
   }
 
@@ -874,6 +910,18 @@ function exportCSV() {
 function clearAll() {
   if (!confirm('모든 구매 내역을 삭제할까요?')) return;
   items = []; save(); render(); toast('✓ 초기화 완료');
+}
+
+function refreshCategories() {
+  let changed = 0;
+  items = items.map(item => {
+    if (item.category === '취소/반품') return item;
+    const newCat = classifyItem(item.name);
+    if (newCat !== item.category) { changed++; return { ...item, category: newCat }; }
+    return item;
+  });
+  save(); render();
+  toast(`✓ 카테고리 재분류 완료 — ${changed}건 변경`);
 }
 
 // ── 날짜 필터 ─────────────────────────────────────────────────────────────────
