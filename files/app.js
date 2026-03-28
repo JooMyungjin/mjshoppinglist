@@ -303,7 +303,11 @@ async function collectAllYears(tab, store = '11st') {
 
     await chrome.tabs.update(tab.id, { url });
     await waitForTabLoad(tab.id);
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 1200));
+    const initSel = store === 'naver'
+      ? '[class*="OrderProductBundle_order_card"],[class*="order_btn_more"]'
+      : 'tbody tr';
+    await waitForTabContent(tab.id, initSel, 10000);
 
     let yearCount = 0;
     try {
@@ -316,11 +320,15 @@ async function collectAllYears(tab, store = '11st') {
             func: () => !!document.querySelector('[class*="order_btn_more"]')
           });
           if (!hasMore) break;
+          const [{ result: cardsBefore }] = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => document.querySelectorAll('[class*="OrderProductBundle_order_card"]').length
+          });
           await chrome.scripting.executeScript({
             target: { tabId: tab.id },
             func: () => document.querySelector('[class*="order_btn_more"]')?.click()
           });
-          await new Promise(r => setTimeout(r, 1500));
+          await waitForCountIncrease(tab.id, '[class*="OrderProductBundle_order_card"]', cardsBefore);
           moreCount++;
           showProgress(`${year}년 수집 중`, pct, `더보기 ${moreCount}회 · 누적 ${totalCount}건`);
           if (moreCount > 50) break;
@@ -335,7 +343,8 @@ async function collectAllYears(tab, store = '11st') {
             const pageUrl = `https://buy.11st.co.kr/my11st/order/OrderList.tmall?shDateFrom=${year}0101&shDateTo=${year}1231&pageNumber=${page}&type=orderList2nd&ver=02`;
             await chrome.tabs.update(tab.id, { url: pageUrl });
             await waitForTabLoad(tab.id);
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise(r => setTimeout(r, 600));
+            await waitForTabContent(tab.id, 'tbody tr', 8000);
           }
           const count = await injectCollector(tab.id, false);
           yearCount += count; totalCount += count;
@@ -389,7 +398,7 @@ function pollCollectDone(tabId, timeout) {
         if (result?.done) { resolve(result.orderCount ?? result.count ?? 0); return; }
       } catch {}
       if (Date.now() - start > timeout) { resolve(0); return; }
-      setTimeout(poll, 1000);
+      setTimeout(poll, 200);
     };
     poll();
   });
@@ -403,6 +412,38 @@ function waitForTabLoad(tabId) {
     chrome.tabs.onUpdated.addListener(check);
     setTimeout(resolve, 10000);
   });
+}
+
+// DOM 요소가 나타날 때까지 폴링 (고정 setTimeout 대체)
+async function waitForTabContent(tabId, selector, timeout = 8000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    await new Promise(r => setTimeout(r, 200));
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: sel => document.querySelectorAll(sel).length > 0,
+        args: [selector]
+      });
+      if (result) return;
+    } catch {}
+  }
+}
+
+// 요소 개수가 늘어날 때까지 폴링 (더보기 클릭 후 대기 대체)
+async function waitForCountIncrease(tabId, selector, prevCount, timeout = 5000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    await new Promise(r => setTimeout(r, 200));
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: sel => document.querySelectorAll(sel).length,
+        args: [selector]
+      });
+      if (result > prevCount) return;
+    } catch {}
+  }
 }
 
 // ── 수집기 본체 (executeScript func으로 주입) ─────────────────────────────────
@@ -429,7 +470,7 @@ function runCollector(allPages) {
   // ── 11번가 ────────────────────────────────────────────────────────────────
   async function collect11st() {
     await waitStable('tbody tr', 8000);
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 200));
     const result = [];
     parse11stRows(document.querySelectorAll('tbody tr')).forEach(i => {
       if (!result.some(r => r.orderId + '|' + r.name + '|' + r.price === i.orderId + '|' + i.name + '|' + i.price))
@@ -499,30 +540,31 @@ function runCollector(allPages) {
 
   // ── 네이버 ────────────────────────────────────────────────────────────────
   async function collectNaver() {
-    // 1. 이전내역 더보기 버튼 반복 클릭
+    // 1. 이전내역 더보기 버튼 반복 클릭 — 카드 수 증가 감지로 즉시 진행
     let prevMoreCount = 0;
     while (true) {
       const moreBtn = document.querySelector('[class*="order_btn_more"]');
       if (!moreBtn) break;
+      const cardsBefore = document.querySelectorAll('[class*="OrderProductBundle_order_card"]').length;
       moreBtn.click();
-      await new Promise(r => setTimeout(r, 1500));
+      for (let t = 0; t < 10; t++) {
+        await new Promise(r => setTimeout(r, 200));
+        if (document.querySelectorAll('[class*="OrderProductBundle_order_card"]').length > cardsBefore) break;
+      }
       if (++prevMoreCount > 20) break;
     }
-    if (prevMoreCount > 0) await new Promise(r => setTimeout(r, 500));
+    if (prevMoreCount > 0) await new Promise(r => setTimeout(r, 150));
 
-    // 2. 총 N건 주문 펼쳐보기 클릭 — BundleSummary가 없어질 때까지 대기
+    // 2. 총 N건 주문 펼쳐보기 클릭 — 모든 버튼이 사라질 때까지 대기
     const expandBtns = [...document.querySelectorAll('[class*="OrderProductBundle_btn_expand"]')];
     if (expandBtns.length > 0) {
-      const beforeCount = document.querySelectorAll('[class*="OrderProductItem_product_area"]').length;
       expandBtns.forEach(btn => btn.click());
-      // 새 product_area가 로딩될 때까지 폴링 (최대 10초)
-      for (let i = 0; i < 20; i++) {
-        await new Promise(r => setTimeout(r, 500));
-        const afterCount = document.querySelectorAll('[class*="OrderProductItem_product_area"]').length;
+      for (let i = 0; i < 40; i++) {
+        await new Promise(r => setTimeout(r, 200));
         const remaining = document.querySelectorAll('[class*="OrderProductBundle_btn_expand"]').length;
-        if (afterCount > beforeCount && remaining === 0) break;
+        if (remaining === 0) break;
       }
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 200));
     }
 
     const result = [];
@@ -589,7 +631,7 @@ function runCollector(allPages) {
       let last = 0, stable = 0, timer = null;
       const check = () => {
         const n = document.querySelectorAll(sel).length;
-        if (n >= 2 && n === last) { stable++; if (stable >= 3 && !timer) timer = setTimeout(resolve, 300); }
+        if (n >= 2 && n === last) { stable++; if (stable >= 2 && !timer) timer = setTimeout(resolve, 100); }
         else { last = n; stable = 0; if (timer) { clearTimeout(timer); timer = null; } }
       };
       const iv = setInterval(check, 100);
@@ -673,7 +715,7 @@ function renderCounts() {
 function renderList() {
   const list = q('#itemList');
   const f = filtered();
-  const BADGE = { coupang: '쿠', naver: '네', '11st': '11' };
+  const BADGE = { coupang: '쿠', naver: 'N', '11st': '11' };
   const sq = filters.search;
 
   if (!f.length) {
