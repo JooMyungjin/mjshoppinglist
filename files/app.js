@@ -847,7 +847,11 @@ function hideProgress() {
 function renderChart() {
   const canvas = q('#donutChart');
   if (!canvas) return;
+  // 차트는 카테고리 필터를 무시하고 전체 분포를 보여줌
+  const savedCat = filters.cat;
+  filters.cat = 'all';
   const f = filtered().filter(i => i.category !== '취소/반품');
+  filters.cat = savedCat;
   const ctx = canvas.getContext('2d');
   const W = 160, cx = W / 2, cy = W / 2, R = 68, r = 42;
 
@@ -868,6 +872,7 @@ function renderChart() {
   const GAP = 0.025;
   entries.forEach(([cat, val]) => {
     const sweep = (val / total) * Math.PI * 2 - GAP;
+    if (sweep <= 0) return; // 너무 작은 슬라이스는 건너뜀 (음수 sweep 방지)
     ctx.beginPath(); ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, R, angle + GAP / 2, angle + GAP / 2 + sweep);
     ctx.closePath();
