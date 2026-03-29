@@ -209,6 +209,33 @@ header{display:flex;align-items:center;justify-content:space-between}
 
 .toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(16px);background:var(--bg4);border:1px solid var(--border2);color:var(--fg);padding:10px 20px;border-radius:22px;font-size:13px;white-space:nowrap;opacity:0;transition:all .25s;pointer-events:none;z-index:999}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ── 가이드 모달 ── */
+.sgroup-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:5px}
+.sgroup-row .sgroup-title{margin-bottom:0}
+.guide-help-btn{width:15px;height:15px;border-radius:50%;background:var(--bg4);border:1px solid var(--border);color:var(--fg3);font-size:9px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .12s;line-height:1}
+.guide-help-btn:hover{background:var(--a);border-color:var(--a);color:#fff}
+.guide-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;display:none;align-items:center;justify-content:center;padding:16px}
+.guide-overlay.show{display:flex}
+.guide-modal{background:var(--bg2);border:1px solid var(--border2);border-radius:16px;width:500px;max-width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden}
+.guide-modal-head{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.guide-modal-title{font-size:13px;font-weight:700;color:var(--fg)}
+.guide-modal-x{width:22px;height:22px;border-radius:50%;background:var(--bg4);border:1px solid var(--border);color:var(--fg3);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;line-height:1;transition:all .12s}
+.guide-modal-x:hover{background:var(--err);border-color:var(--err);color:#fff}
+.guide-modal-body{padding:16px 18px;overflow-y:auto;flex:1}
+.gstep{display:flex;gap:10px;margin-bottom:14px;align-items:flex-start}
+.gstep-n{width:20px;height:20px;border-radius:50%;background:var(--a);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.gstep-t{flex:1;font-size:12px;color:var(--fg2);line-height:1.65}
+.gstep-t strong{color:var(--fg);font-weight:600}
+.gstep-t .sub{font-size:11px;color:var(--fg3);margin-top:2px}
+.gcode-wrap{position:relative;margin-top:8px}
+.gcode{display:block;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;padding-right:54px;font-size:10px;color:var(--a2);font-family:'Menlo','Consolas',monospace;overflow-x:auto;white-space:pre;line-height:1.7;max-height:180px;overflow-y:auto;margin:0}
+.warn-text{color:var(--err)}
+.gcopy{position:absolute;top:6px;right:6px;padding:2px 8px;background:var(--bg4);border:1px solid var(--border);border-radius:4px;color:var(--fg3);font-size:10px;cursor:pointer;transition:all .12s;white-space:nowrap}
+.gcopy:hover{border-color:var(--a);color:var(--a2)}
+.gsection{font-size:10px;font-weight:700;color:var(--fg3);text-transform:uppercase;letter-spacing:.5px;margin:16px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.gtip{background:var(--bg3);border-left:3px solid var(--a);border-radius:0 6px 6px 0;padding:8px 12px;font-size:11px;color:var(--fg3);line-height:1.6;margin-bottom:12px}
+.gtip strong{color:var(--fg2)}
 </style>
 </head>
 <body>
@@ -383,7 +410,10 @@ header{display:flex;align-items:center;justify-content:space-between}
         <div class="card-head">⚙️ 설정</div>
         <div class="settings-body">
           <div>
-            <div class="sgroup-title">구글 시트 연동</div>
+            <div class="sgroup-row">
+              <div class="sgroup-title">구글 시트 연동</div>
+              <button class="guide-help-btn" id="btnGuideSheet">?</button>
+            </div>
             <input class="s-input" id="webhookUrl" placeholder="Apps Script 웹 앱 URL">
             <input class="s-input" id="sheetName" placeholder="시트 이름 (기본: 구매내역)">
             <button class="btn btn-primary" id="btnSaveSettings" style="width:100%;margin-top:4px">저장 및 연결</button>
@@ -396,7 +426,10 @@ header{display:flex;align-items:center;justify-content:space-between}
             </div>
           </div>
           <div>
-            <div class="sgroup-title">카테고리 AI 분류</div>
+            <div class="sgroup-row">
+              <div class="sgroup-title">카테고리 AI 분류</div>
+              <button class="guide-help-btn" id="btnGuideAi">?</button>
+            </div>
             <div style="display:flex;gap:4px;margin-bottom:4px">
               <button class="view-btn on" id="btnAiClaude" style="flex:1;font-size:11px">Claude</button>
               <button class="view-btn" id="btnAiGemini" style="flex:1;font-size:11px">Gemini</button>
@@ -429,6 +462,101 @@ header{display:flex;align-items:center;justify-content:space-between}
             </div>
           </div>
         </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- 가이드 모달 -->
+<div class="guide-overlay" id="guideOverlay">
+  <div class="guide-modal">
+    <div class="guide-modal-head">
+      <div class="guide-modal-title" id="guideModalTitle">가이드</div>
+      <button class="guide-modal-x" id="btnGuideClose">×</button>
+    </div>
+    <div class="guide-modal-body">
+
+      <!-- 구글 시트 연동 가이드 -->
+      <div id="guideSheet">
+        <div class="gtip">구글 스프레드시트에 구매내역을 자동으로 저장합니다.<br><strong>Apps Script 웹 앱</strong>을 만들어 URL을 등록하면 완료!</div>
+        <div class="gsection">1단계 — Apps Script 설정</div>
+        <div class="gstep"><div class="gstep-n">1</div><div class="gstep-t"><strong>구글 스프레드시트</strong>를 새로 만드세요<div class="sub">브라우저에서 sheets.new 접속</div></div></div>
+        <div class="gstep"><div class="gstep-n">2</div><div class="gstep-t">상단 메뉴 <strong>확장 프로그램 → Apps Script</strong> 클릭</div></div>
+        <div class="gstep"><div class="gstep-n">3</div><div class="gstep-t">편집기의 기존 코드를 모두 지우고 아래 스크립트를 붙여넣기
+          <div class="gcode-wrap">
+            <pre class="gcode" id="appsScriptCode">function doPost(e) {
+  try {
+    var payload = JSON.parse(e.postData.contents);
+    var sheetName = payload.sheetName || '구매내역';
+    var items = payload.items || [];
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) {
+      sheet = ss.insertSheet(sheetName);
+      sheet.appendRow(['날짜','상품명','가격','카테고리','태그','쇼핑몰','주문번호']);
+      sheet.setFrozenRows(1);
+    }
+    var lastRow = sheet.getLastRow();
+    var existing = {};
+    if (lastRow &gt; 1) {
+      var rows = sheet.getRange(2, 1, lastRow - 1, 7).getValues();
+      rows.forEach(function(r) {
+        var key = r[6] ? String(r[6]) : r[0] + '|' + r[5];
+        existing[key] = true;
+      });
+    }
+    var added = 0;
+    items.forEach(function(item) {
+      var key = item.orderId ? String(item.orderId) : item.date + '|' + item.store;
+      if (!existing[key]) {
+        sheet.appendRow([item.date, item.name, item.price, item.category,
+          (item.tags || []).join('|'), item.store, item.orderId || '']);
+        existing[key] = true;
+        added++;
+      }
+    });
+    return ContentService.createTextOutput(JSON.stringify({success:true,added:added}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    return ContentService.createTextOutput(JSON.stringify({success:false,error:err.message}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}</pre>
+            <button class="gcopy" id="btnCopyScript">복사</button>
+          </div>
+        </div></div>
+        <div class="gstep"><div class="gstep-n">4</div><div class="gstep-t"><strong>💾 저장</strong> (Ctrl+S 또는 ⌘S)</div></div>
+        <div class="gsection">2단계 — 웹 앱 배포</div>
+        <div class="gstep"><div class="gstep-n">5</div><div class="gstep-t">우측 상단 <strong>배포 → 새 배포</strong> 클릭</div></div>
+        <div class="gstep"><div class="gstep-n">6</div><div class="gstep-t">설정값 확인 후 배포
+          <div class="sub">• 유형: <strong>웹 앱</strong><br>• 다음 사용자로 실행: <strong>나</strong><br>• 액세스 권한: <strong>모든 사용자</strong></div>
+        </div></div>
+        <div class="gstep"><div class="gstep-n">7</div><div class="gstep-t">Google 계정 <strong>권한 허용</strong> 후 배포 완료<div class="sub">고급 → 안전하지 않은 페이지로 이동 → 허용</div></div></div>
+        <div class="gsection">3단계 — 확장 프로그램 연결</div>
+        <div class="gstep"><div class="gstep-n">8</div><div class="gstep-t">배포 후 표시되는 <strong>웹 앱 URL</strong> 복사<div class="sub">https://script.google.com/macros/s/.../exec 형태</div></div></div>
+        <div class="gstep"><div class="gstep-n">9</div><div class="gstep-t">설정의 <strong>Apps Script 웹 앱 URL</strong> 입력란에 붙여넣기</div></div>
+        <div class="gstep"><div class="gstep-n">10</div><div class="gstep-t"><strong>저장 및 연결</strong> 버튼 클릭 → 완료!</div></div>
+      </div>
+
+      <!-- AI 분류 가이드 -->
+      <div id="guideAi" style="display:none">
+        <div class="gtip">'기타'로 분류된 항목을 AI가 자동으로 카테고리 분류합니다.<br>아래 세 서비스 중 하나의 API Key를 발급받아 입력하세요.</div>
+        <div class="gsection">Claude (Anthropic) — 가장 정확</div>
+        <div class="gstep"><div class="gstep-n">1</div><div class="gstep-t"><strong>console.anthropic.com</strong> 접속 후 로그인/가입</div></div>
+        <div class="gstep"><div class="gstep-n">2</div><div class="gstep-t">좌측 메뉴 <strong>API Keys → Create Key</strong></div></div>
+        <div class="gstep"><div class="gstep-n">3</div><div class="gstep-t">생성된 키 즉시 복사 <span class="warn-text">(다시 볼 수 없음!)</span><div class="sub">sk-ant-api03-... 형태</div></div></div>
+        <div class="gstep"><div class="gstep-n">4</div><div class="gstep-t">설정에서 <strong>Claude</strong> 탭 선택 후 붙여넣기</div></div>
+        <div class="gsection">Gemini (Google) — 무료 사용 가능</div>
+        <div class="gstep"><div class="gstep-n">1</div><div class="gstep-t"><strong>aistudio.google.com</strong> 접속 (Google 계정 필요)</div></div>
+        <div class="gstep"><div class="gstep-n">2</div><div class="gstep-t">좌측 <strong>Get API Key → Create API Key</strong></div></div>
+        <div class="gstep"><div class="gstep-n">3</div><div class="gstep-t">키 복사 후 설정에서 <strong>Gemini</strong> 탭 선택 후 붙여넣기</div></div>
+        <div class="gsection">Groq — 무료 · 빠른 속도</div>
+        <div class="gstep"><div class="gstep-n">1</div><div class="gstep-t"><strong>console.groq.com</strong> 접속 후 가입</div></div>
+        <div class="gstep"><div class="gstep-n">2</div><div class="gstep-t"><strong>API Keys → Create API Key</strong></div></div>
+        <div class="gstep"><div class="gstep-n">3</div><div class="gstep-t">gsk_... 형태 키 복사 후 설정에서 <strong>Groq</strong> 탭 선택 후 붙여넣기</div></div>
+        <div class="gsection">사용 방법</div>
+        <div class="gstep"><div class="gstep-n">✓</div><div class="gstep-t">API Key 입력 후 <strong>🤖 기타 항목 자동 분류</strong> 버튼 클릭<div class="sub">'기타' 카테고리 항목만 자동으로 분류됩니다</div></div></div>
       </div>
 
     </div>

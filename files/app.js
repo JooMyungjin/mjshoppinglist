@@ -129,6 +129,13 @@ function bindAll() {
   q('#btnAddRule').addEventListener('click', addRule);
   q('#btnAutoClassify').addEventListener('click', autoClassify);
 
+  // 가이드 모달
+  q('#btnGuideSheet').addEventListener('click', () => showGuide('sheet'));
+  q('#btnGuideAi').addEventListener('click', () => showGuide('ai'));
+  q('#btnGuideClose').addEventListener('click', closeGuide);
+  q('#btnCopyScript').addEventListener('click', copyGuideCode);
+  q('#guideOverlay').addEventListener('click', e => { if (e.target === q('#guideOverlay')) closeGuide(); });
+
   // 메시지 수신
   chrome.runtime.onMessage.addListener(msg => {
     if (msg.action === 'collectProgress') {
@@ -847,7 +854,11 @@ function hideProgress() {
 function renderChart() {
   const canvas = q('#donutChart');
   if (!canvas) return;
+  // 차트는 카테고리 필터를 무시하고 전체 분포를 보여줌
+  const savedCat = filters.cat;
+  filters.cat = 'all';
   const f = filtered().filter(i => i.category !== '취소/반품');
+  filters.cat = savedCat;
   const ctx = canvas.getContext('2d');
   const W = 160, cx = W / 2, cy = W / 2, R = 68, r = 42;
 
@@ -868,6 +879,7 @@ function renderChart() {
   const GAP = 0.025;
   entries.forEach(([cat, val]) => {
     const sweep = (val / total) * Math.PI * 2 - GAP;
+    if (sweep <= 0) return; // 너무 작은 슬라이스는 건너뜀 (음수 sweep 방지)
     ctx.beginPath(); ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, R, angle + GAP / 2, angle + GAP / 2 + sweep);
     ctx.closePath();
@@ -1100,6 +1112,27 @@ function reclassify() {
   });
   if (changed) save();
   applyRules();
+}
+
+// ── 가이드 모달 ───────────────────────────────────────────────────────────────
+function showGuide(type) {
+  q('#guideSheet').style.display = type === 'sheet' ? '' : 'none';
+  q('#guideAi').style.display = type === 'ai' ? '' : 'none';
+  q('#guideModalTitle').textContent = type === 'sheet' ? '📊 구글 시트 연동 설정' : '🤖 카테고리 AI 분류 설정';
+  q('#guideOverlay').classList.add('show');
+}
+
+function closeGuide() {
+  q('#guideOverlay').classList.remove('show');
+}
+
+function copyGuideCode() {
+  const code = q('#appsScriptCode');
+  if (!code) return;
+  navigator.clipboard.writeText(code.textContent).then(() => {
+    const btn = q('#btnCopyScript');
+    if (btn) { btn.textContent = '복사됨!'; setTimeout(() => { btn.textContent = '복사'; }, 1500); }
+  });
 }
 
 // ── 유틸 ──────────────────────────────────────────────────────────────────────
