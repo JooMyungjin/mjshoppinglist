@@ -168,6 +168,13 @@ function doPost(e) {
       sheet.getRange(i + 2, 1, 1, header.length).setBackground(color);
     });
 
+    // 취소/반품 행 가격 취소선
+    rows.forEach((row, i) => {
+      if (row[3] === '취소/반품') {
+        sheet.getRange(i + 2, 3).setFontLine('line-through');
+      }
+    });
+
     // 열 너비 자동 조정
     sheet.autoResizeColumns(1, header.length);
 
