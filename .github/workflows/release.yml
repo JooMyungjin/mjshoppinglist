@@ -54,9 +54,10 @@ jobs:
       - name: Zip files folder
         if: steps.tag_check.outputs.exists == 'false'
         run: |
-          cd files
-          zip -r ../mj-shopping-list-v${{ steps.version.outputs.version }}.zip . -x "*.DS_Store"
-          cd ..
+          VERSION=${{ steps.version.outputs.version }}
+          mkdir -p mj-shopping-list-v${VERSION}
+          cp -r files mj-shopping-list-v${VERSION}/files
+          zip -r mj-shopping-list-v${VERSION}.zip mj-shopping-list-v${VERSION}/ -x "*.DS_Store"
 
       - name: Create Release
         if: steps.tag_check.outputs.exists == 'false'
