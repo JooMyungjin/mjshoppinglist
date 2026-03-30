@@ -101,7 +101,7 @@ function doPost(e) {
     const header = ['날짜', '상품명', '가격(원)', '카테고리', '개인화태그', '쇼핑몰', '주문번호'];
     const rows = data.items.map(i => [
       i.date || '',
-      i.name || '',
+      i.url ? `=HYPERLINK("${i.url}","${(i.name || '').replace(/"/g, '""')}")` : (i.name || ''),
       i.price || 0,
       i.category || '',
       (i.tags || []).join(', '),
