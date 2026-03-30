@@ -7,7 +7,8 @@
 ## 설치 방법
 
 ### 1단계 — 파일 다운로드
-
+[최신 Releases](https://github.com/JooMyungjin/mjshoppinglist/releases) 파일(mj-shopping-list-v0.0.0.zip
+)을 다운로드 받습니다.
 `files` 폴더를 로컬에 저장합니다 (zip 압축 해제 또는 폴더 복사).
 
 ### 2단계 — 크롬 확장프로그램 로드
