@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "쇼핑 내역 정리",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "쿠팡, 네이버쇼핑, 11번가 구매 내역을 수집하고 구글 시트에 저장합니다.",
   "permissions": [
     "activeTab",
