@@ -95,11 +95,32 @@ function doPost(e) {
     let sheet = ss.getSheetByName(data.sheetName || '구매내역');
     if (!sheet) sheet = ss.insertSheet(data.sheetName || '구매내역');
 
-    sheet.clearContents();
-    sheet.clearFormats();
-
     const header = ['날짜', '상품명', '가격(원)', '카테고리', '개인화태그', '쇼핑몰', '주문번호'];
-    const rows = data.items.map(i => [
+
+    // 헤더 (시트가 비어있을 때만)
+    if (sheet.getLastRow() === 0) {
+      const headerRange = sheet.getRange(1, 1, 1, header.length);
+      headerRange.setValues([header]);
+      headerRange.setBackground('#1a1a2e');
+      headerRange.setFontColor('#a89df5');
+      headerRange.setFontWeight('bold');
+    }
+
+    // 기존 데이터에서 중복 키 수집 (orderId|상품명)
+    const existingKeys = new Set();
+    const lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      sheet.getRange(2, 1, lastRow - 1, header.length).getValues().forEach(row => {
+        existingKeys.add(row[6] + '|' + row[1]);
+      });
+    }
+
+    // 기존에 없는 항목만 추출
+    const newItems = data.items.filter(i =>
+      !existingKeys.has((i.orderId || '') + '|' + (i.name || ''))
+    );
+
+    const rows = newItems.map(i => [
       i.date || '',
       i.url ? `=HYPERLINK("${i.url}","${(i.name || '').replace(/"/g, '""')}")` : (i.name || ''),
       i.price || 0,
@@ -109,20 +130,14 @@ function doPost(e) {
       i.orderId || ''
     ]);
 
-    // 헤더
-    const headerRange = sheet.getRange(1, 1, 1, header.length);
-    headerRange.setValues([header]);
-    headerRange.setBackground('#1a1a2e');
-    headerRange.setFontColor('#a89df5');
-    headerRange.setFontWeight('bold');
-
     if (!rows.length) {
       return ContentService
-        .createTextOutput(JSON.stringify({ success: true, count: 0 }))
+        .createTextOutput(JSON.stringify({ success: true, count: 0, added: 0 }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    sheet.getRange(2, 1, rows.length, header.length).setValues(rows);
+    const startRow = sheet.getLastRow() + 1;
+    sheet.getRange(startRow, 1, rows.length, header.length).setValues(rows);
 
     // 주문번호별 색상 그룹핑
     // 같은 주문번호 = 옵션 상품 포함 → 같은 배경색
@@ -165,13 +180,13 @@ function doPost(e) {
     rows.forEach((row, i) => {
       const orderId = row[6];
       const color = orderColorMap[orderId] || GROUP_COLORS[0];
-      sheet.getRange(i + 2, 1, 1, header.length).setBackground(color);
+      sheet.getRange(startRow + i, 1, 1, header.length).setBackground(color);
     });
 
     // 취소/반품 행 가격 취소선
     rows.forEach((row, i) => {
       if (row[3] === '취소/반품') {
-        sheet.getRange(i + 2, 3).setFontLine('line-through');
+        sheet.getRange(startRow + i, 3).setFontLine('line-through');
       }
     });
 
@@ -179,7 +194,7 @@ function doPost(e) {
     sheet.autoResizeColumns(1, header.length);
 
     return ContentService
-      .createTextOutput(JSON.stringify({ success: true, count: rows.length }))
+      .createTextOutput(JSON.stringify({ success: true, count: data.items.length, added: rows.length }))
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch(err) {
