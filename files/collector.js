@@ -161,7 +161,8 @@ window.__shopCollecting = false;
       const price = parseInt((priceEl?.textContent || '').replace(/[^0-9]/g, '')) || 0;
       if (!name || !price) return;
       const dateStr = dateEl?.getAttribute('datetime') || dateEl?.textContent.trim() || '';
-      result.push({ store: 'naver', name, price, date: parseDate(dateStr), orderId: hash('nv'+name+price), category: category(name), collectedAt: new Date().toISOString() });
+      const url = card.querySelector('[class*="OrderProductItem_btn_detail"],[class*="btn_detail"]')?.href || '';
+      result.push({ store: 'naver', name, price, date: parseDate(dateStr), orderId: hash('nv'+name+price), url, category: category(name), collectedAt: new Date().toISOString() });
     });
     return result;
   }

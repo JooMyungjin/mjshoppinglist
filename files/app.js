@@ -681,11 +681,12 @@ function runCollector(allPages) {
         const rawDate = dateStr;
         const date = parseNaverDate(dateStr) || cardDate;
         const dateUnknown = !date;
+        const url = area.querySelector('[class*="OrderProductItem_btn_detail"]')?.href || '';
         if (result.some(r => r.orderId === cardOrderId && r.name === name && r.price === price)) return;
         result.push({
           store: 'naver', name, price,
           date: date || 'DATE_UNKNOWN',
-          orderId: cardOrderId, rawDate,
+          orderId: cardOrderId, rawDate, url,
           dateUnknown: dateUnknown || date === 'DATE_UNKNOWN',
           category: getCategory(name),
           collectedAt: new Date().toISOString()
