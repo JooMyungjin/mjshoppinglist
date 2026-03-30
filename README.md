@@ -90,89 +90,51 @@
 ```javascript
 function doPost(e) {
   try {
-    const data = JSON.parse(e.postData.contents);
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    let sheet = ss.getSheetByName(data.sheetName || '구매내역');
-    if (!sheet) sheet = ss.insertSheet(data.sheetName || '구매내역');
+    var payload = JSON.parse(e.postData.contents);
+    var sheetName = payload.sheetName || '구매내역';
+    var items = payload.items || [];
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(sheetName);
 
-    sheet.clearContents();
-    sheet.clearFormats();
-
-    const header = ['날짜', '상품명', '가격(원)', '카테고리', '개인화태그', '쇼핑몰', '주문번호'];
-    const rows = data.items.map(i => [
-      i.date || '',
-      i.name || '',
-      i.price || 0,
-      i.category || '',
-      (i.tags || []).join(', '),
-      i.store || '',
-      i.orderId || ''
-    ]);
-
-    // 헤더
-    const headerRange = sheet.getRange(1, 1, 1, header.length);
-    headerRange.setValues([header]);
-    headerRange.setBackground('#1a1a2e');
-    headerRange.setFontColor('#a89df5');
-    headerRange.setFontWeight('bold');
-
-    if (!rows.length) {
-      return ContentService
-        .createTextOutput(JSON.stringify({ success: true, count: 0 }))
-        .setMimeType(ContentService.MimeType.JSON);
+    // 시트가 없으면 생성 + 헤더 추가
+    if (!sheet) {
+      sheet = ss.insertSheet(sheetName);
+      sheet.appendRow(['날짜', '상품명', '가격', '카테고리', '태그', '쇼핑몰', '주문번호']);
+      sheet.setFrozenRows(1);
     }
 
-    sheet.getRange(2, 1, rows.length, header.length).setValues(rows);
+    // 기존 주문번호 목록 수집 (중복 방지)
+    var lastRow = sheet.getLastRow();
+    var existing = {};
+    if (lastRow > 1) {
+      var rows = sheet.getRange(2, 1, lastRow - 1, 7).getValues();
+      rows.forEach(function(r) {
+        var key = r[6] ? String(r[6]) : r[0] + '|' + r[5];
+        existing[key] = true;
+      });
+    }
 
-    // 주문번호별 색상 그룹핑
-    // 같은 주문번호 = 옵션 상품 포함 → 같은 배경색
-    const GROUP_COLORS = [
-      '#ffffff', // 흰색 (단일 주문)
-      '#eef2ff', // 연보라
-      '#fef9ee', // 연노랑
-      '#eefaf4', // 연초록
-      '#fef0f0', // 연빨강
-      '#f0f8ff', // 연파랑
-    ];
-
-    // 주문번호별 등장 순서 매핑
-    const orderColorMap = {};
-    let colorIdx = 0;
-    const orderCount = {};
-
-    // 먼저 각 주문번호 등장 횟수 카운트
-    rows.forEach(row => {
-      const orderId = row[6];
-      orderCount[orderId] = (orderCount[orderId] || 0) + 1;
-    });
-
-    // 색상 할당 (2개 이상인 주문번호만 색상 부여, 순차 반복)
-    let multiColorIdx = 0;
-    rows.forEach(row => {
-      const orderId = row[6];
-      if (orderColorMap[orderId] === undefined) {
-        if (orderCount[orderId] > 1) {
-          // 여러 옵션 있는 주문 → 순차 색상 (1번부터)
-          multiColorIdx = (multiColorIdx % (GROUP_COLORS.length - 1)) + 1;
-          orderColorMap[orderId] = GROUP_COLORS[multiColorIdx];
-        } else {
-          orderColorMap[orderId] = GROUP_COLORS[0]; // 단일 주문 = 흰색
-        }
+    // 새 항목만 추가
+    var added = 0;
+    items.forEach(function(item) {
+      var key = item.orderId ? String(item.orderId) : item.date + '|' + item.store;
+      if (!existing[key]) {
+        sheet.appendRow([
+          item.date || '',
+          item.name || '',
+          item.price || 0,
+          item.category || '',
+          (item.tags || []).join('|'),
+          item.store || '',
+          item.orderId || ''
+        ]);
+        existing[key] = true;
+        added++;
       }
     });
 
-    // 행별 배경색 적용
-    rows.forEach((row, i) => {
-      const orderId = row[6];
-      const color = orderColorMap[orderId] || GROUP_COLORS[0];
-      sheet.getRange(i + 2, 1, 1, header.length).setBackground(color);
-    });
-
-    // 열 너비 자동 조정
-    sheet.autoResizeColumns(1, header.length);
-
     return ContentService
-      .createTextOutput(JSON.stringify({ success: true, count: rows.length }))
+      .createTextOutput(JSON.stringify({ success: true, added: added }))
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch(err) {
