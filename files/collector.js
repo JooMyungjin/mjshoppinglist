@@ -35,8 +35,8 @@ window.__shopCollecting = false;
       await waitStable('tbody tr', 8000);
       await new Promise(r => setTimeout(r, 300));
 
-      const rows = document.querySelectorAll('tbody tr');
-      const pageItems = parse11stRows(rows);
+      const rows = [...document.querySelectorAll('tbody tr')];
+      const pageItems = await parse11stRows(rows);
       result.push(...pageItems);
       pageCount++;
 
@@ -67,18 +67,18 @@ window.__shopCollecting = false;
     return [...pager.querySelectorAll('a')].find(a => /다음|next/i.test(a.textContent)) || null;
   }
 
-  function parse11stRows(rows) {
+  async function parse11stRows(rows) {
     const result = [];
     let date = today(), orderId = '';
-    rows.forEach(row => {
+    for (const row of rows) {
       const txt = row.textContent.replace(/\s+/g, ' ').trim();
-      if (txt.length < 10) return;
+      if (txt.length < 10) continue;
       const dm = txt.match(/(\d{4})-(\d{2})-(\d{2})/);
       if (dm) { date = `${dm[1]}-${dm[2]}-${dm[3]}`; const om = txt.match(/\((\d{10,})\)/); if (om) orderId = om[1]; }
       const pm = txt.match(/([\d,]+)원\s*\(\d+개\)/);
-      if (!pm) return;
+      if (!pm) continue;
       const price = parseInt(pm[1].replace(/,/g, ''));
-      if (price <= 0) return;
+      if (price <= 0) continue;
       const beforePrice = txt.indexOf(pm[0]);
       let name = '';
       if (txt.includes('상세보기')) {
@@ -88,21 +88,46 @@ window.__shopCollecting = false;
         const i = txt.indexOf('주문내역삭제') + 6;
         name = txt.slice(i, beforePrice).trimStart().split(/\s+지점:|\s+선택:|\s*옵션명\s+\d/)[0].trim();
       } else {
-        // 옵션 분리 행: "상품명 옵션명 1:A~B옵션명 2:B실제옵션명 가격원"
-        // 상품명 + 마지막 옵션값을 합쳐 유니크하게
         const baseName = txt.slice(0, beforePrice).split(/옵션명\s+\d/)[0].trim();
-        // 마지막 "옵션명 N:코드한글자" 이후 ~ 가격 앞까지가 실제 옵션값
         const optMatch = txt.match(/(?:.*옵션명\s+\d+:.)(.+?)\s+[\d,]+원/);
         const optVal = optMatch ? optMatch[1].trim() : '';
         name = optVal ? baseName + ' / ' + optVal : baseName;
       }
-      if (!name || name.length < 2) return;
+      if (!name || name.length < 2) continue;
       const key = orderId + '|' + name + '|' + price;
-      if (result.some(i => i.orderId + '|' + i.name + '|' + i.price === key)) return;
+      if (result.some(i => i.orderId + '|' + i.name + '|' + i.price === key)) continue;
       const cancelled = /주문내역삭제|주문취소|취소완료|반품|환불|교환/.test(txt);
-      result.push({ store: '11st', name, price, date, orderId: orderId || hash(name+price+date), category: cancelled ? '취소/반품' : category(name), collectedAt: new Date().toISOString() });
-    });
+      const url = await get11stProductUrl(row);
+      result.push({ store: '11st', name, price, date, url, orderId: orderId || hash(name+price+date), category: cancelled ? '취소/반품' : category(name), collectedAt: new Date().toISOString() });
+    }
     return result;
+  }
+
+  // 상품명 클릭 → 팝업에서 "상품번호: XXXXXXXXXX" 추출
+  async function get11stProductUrl(row) {
+    const trigger = row.querySelector(
+      'a[onclick], button[onclick], [class*="prdName"] a, [class*="prod_name"] a, [class*="goodsName"] a, td.goods a, td.product a'
+    );
+    if (!trigger) return '';
+    trigger.click();
+    const popup = await new Promise(resolve => {
+      const deadline = Date.now() + 2000;
+      const tick = setInterval(() => {
+        const el = [...document.querySelectorAll(
+          '[class*="layer"], [class*="popup"], [class*="modal"], [class*="dialog"]'
+        )].find(el => /상품번호/.test(el.textContent) && el.offsetParent !== null);
+        if (el || Date.now() > deadline) { clearInterval(tick); resolve(el || null); }
+      }, 80);
+    });
+    if (!popup) return '';
+    const m = popup.textContent.match(/상품번호[^\d]*(\d{7,})/);
+    const closeBtn = popup.querySelector(
+      '[class*="close"], [class*="btn_close"], button[title*="닫"], a[title*="닫"]'
+    );
+    if (closeBtn) closeBtn.click();
+    else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+    await new Promise(r => setTimeout(r, 150));
+    return m ? `https://www.11st.co.kr/products/${m[1]}` : '';
   }
 
   // ── 쿠팡 ────────────────────────────────────────────────────────────────
@@ -117,7 +142,9 @@ window.__shopCollecting = false;
       const price = parseInt((priceEls[i]?.textContent || '').replace(/[^0-9]/g, '')) || 0;
       if (!price) return;
       const dateStr = dateEls[Math.min(i, dateEls.length-1)]?.textContent.trim() || '';
-      result.push({ store: 'coupang', name, price, date: parseDate(dateStr), orderId: hash('cp'+name+price), category: category(name), collectedAt: new Date().toISOString() });
+      const linkEl = el.closest('a') || el.querySelector('a') || el.parentElement?.closest('a');
+      const url = linkEl?.href || '';
+      result.push({ store: 'coupang', name, price, date: parseDate(dateStr), orderId: hash('cp'+name+price), url, category: category(name), collectedAt: new Date().toISOString() });
     });
     return result;
   }
@@ -134,7 +161,8 @@ window.__shopCollecting = false;
       const price = parseInt((priceEl?.textContent || '').replace(/[^0-9]/g, '')) || 0;
       if (!name || !price) return;
       const dateStr = dateEl?.getAttribute('datetime') || dateEl?.textContent.trim() || '';
-      result.push({ store: 'naver', name, price, date: parseDate(dateStr), orderId: hash('nv'+name+price), category: category(name), collectedAt: new Date().toISOString() });
+      const url = card.querySelector('[class*="OrderProductItem_btn_detail"],[class*="btn_detail"]')?.href || '';
+      result.push({ store: 'naver', name, price, date: parseDate(dateStr), orderId: hash('nv'+name+price), url, category: category(name), collectedAt: new Date().toISOString() });
     });
     return result;
   }
