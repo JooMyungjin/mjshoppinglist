@@ -7,10 +7,16 @@
 ## 설치 방법
 
 ### 1단계 — 파일 다운로드
+[최신 Releases](https://github.com/JooMyungjin/mjshoppinglist/releases) 파일(mj-shopping-list-v0.0.0.zip
+)을 다운로드 받습니다.
 
 `files` 폴더를 로컬에 저장합니다 (zip 압축 해제 또는 폴더 복사).
 
+
 ### 2단계 — 크롬 확장프로그램 로드
+
+<img width="492" height="158" alt="image" src="https://github.com/user-attachments/assets/9454a899-5e00-4dfb-b3bc-a90aafa35c0a" />
+
 
 1. 크롬 주소창에 `chrome://extensions/` 입력
 2. 우측 상단 **개발자 모드** 토글 ON
@@ -84,45 +90,121 @@
 ```javascript
 function doPost(e) {
   try {
-    var payload = JSON.parse(e.postData.contents);
-    var sheetName = payload.sheetName || '구매내역';
-    var items = payload.items || [];
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName(sheetName);
-    if (!sheet) {
-      sheet = ss.insertSheet(sheetName);
-      sheet.appendRow(['날짜','상품명','가격','카테고리','태그','쇼핑몰','주문번호']);
-      sheet.setFrozenRows(1);
+    const data = JSON.parse(e.postData.contents);
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName(data.sheetName || '구매내역');
+    if (!sheet) sheet = ss.insertSheet(data.sheetName || '구매내역');
+
+    const header = ['날짜', '상품명', '가격(원)', '카테고리', '개인화태그', '쇼핑몰', '주문번호'];
+
+    // 헤더 (시트가 비어있을 때만)
+    if (sheet.getLastRow() === 0) {
+      const headerRange = sheet.getRange(1, 1, 1, header.length);
+      headerRange.setValues([header]);
+      headerRange.setBackground('#1a1a2e');
+      headerRange.setFontColor('#a89df5');
+      headerRange.setFontWeight('bold');
     }
-    var lastRow = sheet.getLastRow();
-    var existing = {};
+
+    // 기존 데이터에서 중복 키 수집 (orderId|상품명)
+    const existingKeys = new Set();
+    const lastRow = sheet.getLastRow();
     if (lastRow > 1) {
-      var rows = sheet.getRange(2, 1, lastRow - 1, 7).getValues();
-      rows.forEach(function(r) {
-        var key = r[6] ? String(r[6]) : r[0] + '|' + r[5];
-        existing[key] = true;
+      sheet.getRange(2, 1, lastRow - 1, header.length).getValues().forEach(row => {
+        existingKeys.add(row[6] + '|' + row[1]);
       });
     }
-    var added = 0;
-    items.forEach(function(item) {
-      var key = item.orderId ? String(item.orderId) : item.date + '|' + item.store;
-      if (!existing[key]) {
-        sheet.appendRow([item.date, item.name, item.price, item.category,
-          (item.tags || []).join('|'), item.store, item.orderId || '']);
-        existing[key] = true;
-        added++;
+
+    // 기존에 없는 항목만 추출
+    const newItems = data.items.filter(i =>
+      !existingKeys.has((i.orderId || '') + '|' + (i.name || ''))
+    );
+
+    const rows = newItems.map(i => [
+      i.date || '',
+      i.url ? `=HYPERLINK("${i.url}","${(i.name || '').replace(/"/g, '""')}")` : (i.name || ''),
+      i.price || 0,
+      i.category || '',
+      (i.tags || []).join(', '),
+      i.store || '',
+      i.orderId || ''
+    ]);
+
+    if (!rows.length) {
+      return ContentService
+        .createTextOutput(JSON.stringify({ success: true, count: 0, added: 0 }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const startRow = sheet.getLastRow() + 1;
+    sheet.getRange(startRow, 1, rows.length, header.length).setValues(rows);
+
+    // 주문번호별 색상 그룹핑
+    // 같은 주문번호 = 옵션 상품 포함 → 같은 배경색
+    const GROUP_COLORS = [
+      '#ffffff', // 흰색 (단일 주문)
+      '#eef2ff', // 연보라
+      '#fef9ee', // 연노랑
+      '#eefaf4', // 연초록
+      '#fef0f0', // 연빨강
+      '#f0f8ff', // 연파랑
+    ];
+
+    // 주문번호별 등장 순서 매핑
+    const orderColorMap = {};
+    let colorIdx = 0;
+    const orderCount = {};
+
+    // 먼저 각 주문번호 등장 횟수 카운트
+    rows.forEach(row => {
+      const orderId = row[6];
+      orderCount[orderId] = (orderCount[orderId] || 0) + 1;
+    });
+
+    // 색상 할당 (2개 이상인 주문번호만 색상 부여, 순차 반복)
+    let multiColorIdx = 0;
+    rows.forEach(row => {
+      const orderId = row[6];
+      if (orderColorMap[orderId] === undefined) {
+        if (orderCount[orderId] > 1) {
+          // 여러 옵션 있는 주문 → 순차 색상 (1번부터)
+          multiColorIdx = (multiColorIdx % (GROUP_COLORS.length - 1)) + 1;
+          orderColorMap[orderId] = GROUP_COLORS[multiColorIdx];
+        } else {
+          orderColorMap[orderId] = GROUP_COLORS[0]; // 단일 주문 = 흰색
+        }
       }
     });
-    return ContentService.createTextOutput(JSON.stringify({success:true,added:added}))
+
+    // 행별 배경색 적용
+    rows.forEach((row, i) => {
+      const orderId = row[6];
+      const color = orderColorMap[orderId] || GROUP_COLORS[0];
+      sheet.getRange(startRow + i, 1, 1, header.length).setBackground(color);
+    });
+
+    // 취소/반품 행 가격 취소선
+    rows.forEach((row, i) => {
+      if (row[3] === '취소/반품') {
+        sheet.getRange(startRow + i, 3).setFontLine('line-through');
+      }
+    });
+
+    // 열 너비 자동 조정
+    sheet.autoResizeColumns(1, header.length);
+
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: true, count: data.items.length, added: rows.length }))
       .setMimeType(ContentService.MimeType.JSON);
+
   } catch(err) {
-    return ContentService.createTextOutput(JSON.stringify({success:false,error:err.message}))
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: err.message }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
 ```
 
-> 확장프로그램 설정 패널의 **?** 버튼을 클릭하면 위 코드를 바로 복사할 수 있습니다.
 
 3. **저장** (Ctrl+S 또는 ⌘S)
 

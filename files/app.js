@@ -774,7 +774,7 @@ function renderStats() {
   const monthOrders = new Set(items.filter(i => i.date?.startsWith(now)).map(i => i.orderId || i.date + '|' + i.store)).size;
   q('#statTotal').textContent = totalOrders;
   q('#statMonth').textContent = monthOrders;
-  q('#statAmount').textContent = Math.round(items.reduce((s, i) => s + (i.price || 0), 0) / 10000);
+  q('#statAmount').textContent = Math.round(items.filter(i => i.category !== '취소/반품').reduce((s, i) => s + (i.price || 0), 0) / 10000);
 }
 
 function renderCounts() {
@@ -806,7 +806,7 @@ function renderList() {
   const orders = [...orderMap.values()].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   list.innerHTML = orders.map(order => {
-    const totalPrice = order.items.reduce((s, i) => s + (i.price || 0), 0);
+    const totalPrice = order.items.filter(i => i.category !== '취소/반품').reduce((s, i) => s + (i.price || 0), 0);
     const isCancelled = order.items.every(i => i.category === '취소/반품');
     const hasDateUnknown = order.items.some(i => i.dateUnknown);
 
