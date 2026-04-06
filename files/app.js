@@ -41,7 +41,8 @@ const SHOP_PATTERNS = [
   'buy.11st.co.kr', '11st.co.kr/my11st',
   'mc.coupang.com', 'coupang.com/np/orders',
   'orders.pay.naver.com', 'shopping.naver.com/my/order', 'pay.naver.com',
-  '11st.co.kr', 'coupang.com', 'naver.com'
+  'aliexpress.com/p/order',
+  '11st.co.kr', 'coupang.com', 'naver.com', 'aliexpress.com'
 ];
 
 async function findShopTab() {
@@ -112,6 +113,9 @@ function bindAll() {
   q('#btnRefreshCategories').addEventListener('click', refreshCategories);
   q('#btnExportRow').addEventListener('click', exportCSV);
   q('#btnClearRow').addEventListener('click', clearAll);
+  document.querySelectorAll('[data-clear-store]').forEach(btn => {
+    btn.addEventListener('click', () => clearStore(btn.dataset.clearStore));
+  });
 
   // 설정
   q('#btnSaveSettings').addEventListener('click', saveSettings);
@@ -287,11 +291,15 @@ async function collectAuto() {
   const is11st = tab.url.includes('11st.co.kr');
   const isNaver = tab.url.includes('naver.com');
   const isCoupang = tab.url.includes('coupang.com');
-  if (!is11st && !isNaver && !isCoupang) { toast('⚠️ 현재 전체 자동 수집은 11번가/네이버/쿠팡만 지원해요'); return; }
-  const store = is11st ? '11st' : isNaver ? 'naver' : 'coupang';
+  const isAliexpress = tab.url.includes('aliexpress.com');
+  if (!is11st && !isNaver && !isCoupang && !isAliexpress) { toast('⚠️ 현재 전체 자동 수집은 11번가/네이버/쿠팡/알리익스프레스만 지원해요'); return; }
+  const store = is11st ? '11st' : isNaver ? 'naver' : isCoupang ? 'coupang' : 'aliexpress';
   const btn = q('#btnCollectAuto');
   btn.disabled = true;
-  try { await collectAllYears(tab, store); }
+  try {
+    if (store === 'aliexpress') await collectAllPagesAli(tab);
+    else await collectAllYears(tab, store);
+  }
   finally { btn.disabled = false; btn.textContent = '⟳ 전체 기간 자동 수집'; }
 }
 
@@ -414,6 +422,47 @@ async function collectAllYears(tab, store = '11st') {
   render();
 }
 
+async function collectAllPagesAli(tab) {
+  const btn = q('#btnCollectAuto');
+  showProgress('알리익스프레스 수집 시작...', 0, '');
+
+  // "주문 더 보기" 버튼 반복 클릭
+  let clickCount = 0;
+  while (true) {
+    const [{ result: hasMore }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => !!([...document.querySelectorAll('button')].find(b => /주문 더 보기/.test(b.textContent)))
+    });
+    if (!hasMore) break;
+
+    const [{ result: linksBefore }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => document.querySelectorAll('a[href*="/item/"]').length
+    });
+
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => ([...document.querySelectorAll('button')].find(b => /주문 더 보기/.test(b.textContent)))?.click()
+    });
+
+    await waitForCountIncrease(tab.id, 'a[href*="/item/"]', linksBefore, 8000);
+    clickCount++;
+    showProgress(`더 보기 ${clickCount}회 클릭`, 50, '로딩 중...');
+    btn.textContent = `⏳ 더 보기 ${clickCount}회 클릭 중...`;
+    if (clickCount > 100) break;
+  }
+
+  await new Promise(r => setTimeout(r, 500));
+  const count = await injectCollector(tab.id, false);
+
+  settings.lastCollectedAt = new Date().toISOString();
+  save();
+  showProgress('수집 완료!', 100, `총 ${count}건`);
+  setTimeout(hideProgress, 3000);
+  toast(`✓ 알리익스프레스 수집 완료 — 총 ${count}건`);
+  render();
+}
+
 // ── 수집기 주입 ───────────────────────────────────────────────────────────────
 async function injectCollector(tabId, allPages) {
   await chrome.scripting.executeScript({ target: { tabId }, func: () => { window.__collectResult = null; window.__shopCollecting = false; } });
@@ -492,6 +541,7 @@ function runCollector(allPages) {
       if (url.includes('11st.co.kr')) collected = await collect11st();
       else if (url.includes('coupang.com')) collected = collectCoupang();
       else if (url.includes('naver.com')) collected = await collectNaver();
+      else if (url.includes('aliexpress.com')) collected = await collectAliexpress();
     } catch (e) { console.error('[collect error]', e.message); }
 
     window.__shopCollecting = false;
@@ -733,6 +783,93 @@ function runCollector(allPages) {
     return null;
   }
 
+  // ── 알리익스프레스 ────────────────────────────────────────────────────────
+  async function collectAliexpress() {
+    await new Promise(r => setTimeout(r, 300));
+    const result = [];
+
+    // 총 금액 요소를 기준으로 상품 추출 (쿠폰/할인 링크 자동 제외)
+    const priceTotals = [...document.querySelectorAll('[data-pl="order_item_content_price_total"]')];
+
+    for (const priceEl of priceTotals) {
+      // es--char 스팬 조합으로 가격 문자열 재구성 ("US $37.31", "₩89,730" 등)
+      const wrap = priceEl.querySelector('[class*="es--wrap"]');
+      if (!wrap) continue;
+      const rawPrice = [...wrap.querySelectorAll('[class*="es--char"]')].map(s => s.textContent).join('').trim();
+
+      let price = 0, currency = 'KRW';
+      if (/US\s*\$/.test(rawPrice)) {
+        currency = 'USD';
+        const m = rawPrice.replace(/US\s*\$/, '').match(/([\d.]+)/);
+        price = m ? parseFloat(m[1]) : 0;
+      } else if (/[₩￦]/.test(rawPrice)) {
+        currency = 'KRW';
+        const m = rawPrice.replace(/[₩￦,]/g, '').match(/(\d+)/);
+        price = m ? parseInt(m[1]) : 0;
+      } else {
+        const m = rawPrice.replace(/,/g, '').match(/(\d+)/);
+        price = m ? parseInt(m[1]) : 0;
+      }
+      if (!price) continue;
+
+      // 같은 상품 컨테이너에서 링크 탐색 — 정확히 1개인 가장 가까운 조상
+      let container = priceEl.parentElement;
+      let link = null;
+      let name = '';
+      for (let i = 0; i < 12 && container; i++) {
+        const validLinks = [...container.querySelectorAll('a[href*="/item/"]')].filter(l => {
+          const t = l.querySelector('span[title]')?.getAttribute('title')?.trim() || '';
+          return t.length >= 5 && !/구매\s*시|할인|coupon/i.test(t);
+        });
+        if (validLinks.length === 1) {
+          link = validLinks[0];
+          const ns = link.querySelector('span[title]');
+          name = ns?.getAttribute('title')?.trim() || ns?.textContent.trim() || '';
+          break;
+        }
+        container = container.parentElement;
+      }
+      if (!name || name.length < 5) continue;
+      if (/구매\s*시|할인|coupon/i.test(name)) continue;
+
+      // URL
+      let url = (link?.getAttribute('href') || '');
+      if (url.startsWith('//')) url = 'https:' + url;
+      else if (url.startsWith('/')) url = 'https://www.aliexpress.com' + url;
+
+      // 주문 컨테이너 탐색 (주문 ID + 날짜)
+      let orderEl = priceEl.parentElement;
+      for (let i = 0; i < 15; i++) {
+        if (!orderEl) break;
+        if (orderEl.textContent.includes('주문 ID:')) break;
+        orderEl = orderEl.parentElement;
+      }
+      const ctText = (orderEl?.textContent || '').replace(/\s+/g, ' ');
+      const orderIdM = ctText.match(/주문\s*ID[:\s]*(\d{10,})/);
+      const orderId = orderIdM ? orderIdM[1]
+        : 'ali_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+      const dateM = ctText.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
+      const date = dateM
+        ? `${dateM[1]}-${dateM[2].padStart(2, '0')}-${dateM[3].padStart(2, '0')}`
+        : new Date().toISOString().slice(0, 10);
+      const cancelled = /취소|cancel|refund|환불/i.test(
+        orderEl?.querySelector('[class*="cancel"],[class*="Cancel"]')?.textContent || ''
+      );
+
+      const key = orderId + '|' + name + '|' + price;
+      if (result.some(r => r.orderId + '|' + r.name + '|' + r.price === key)) continue;
+
+      result.push({
+        store: 'aliexpress', name, price, currency, date, orderId, url,
+        category: cancelled ? '취소/반품' : getCategory(name),
+        collectedAt: new Date().toISOString()
+      });
+    }
+
+    window.__aliHasNext = false;
+    return result;
+  }
+
   function getCategory(name) {
     return typeof classifyItem === 'function' ? classifyItem(name) : '기타';
   }
@@ -778,7 +915,7 @@ function renderStats() {
 }
 
 function renderCounts() {
-  ['coupang', 'naver', '11st'].forEach(s => {
+  ['coupang', 'naver', '11st', 'aliexpress'].forEach(s => {
     const el = q('#cnt-' + s);
     if (el) el.textContent = items.filter(i => i.store === s).length + '건';
   });
@@ -787,7 +924,7 @@ function renderCounts() {
 function renderList() {
   const list = q('#itemList');
   const f = filtered();
-  const BADGE = { coupang: '쿠', naver: 'N', '11st': '11' };
+  const BADGE = { coupang: '쿠', naver: 'N', '11st': '11', aliexpress: 'Ali' };
   const sq = filters.search;
 
   if (!f.length) {
@@ -806,7 +943,10 @@ function renderList() {
   const orders = [...orderMap.values()].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   list.innerHTML = orders.map(order => {
-    const totalPrice = order.items.filter(i => i.category !== '취소/반품').reduce((s, i) => s + (i.price || 0), 0);
+    const activeItems = order.items.filter(i => i.category !== '취소/반품');
+    const orderCurrency = order.items[0]?.currency;
+    const totalPrice = activeItems.reduce((s, i) => s + (i.price || 0), 0);
+    const totalDisplay = orderCurrency === 'USD' ? `US $${totalPrice.toFixed(2)}` : fmt(totalPrice);
     const isCancelled = order.items.every(i => i.category === '취소/반품');
     const hasDateUnknown = order.items.some(i => i.dateUnknown);
 
@@ -828,7 +968,7 @@ function renderList() {
           <span class="cat-badge" data-idx="${idx}" title="클릭해서 수정">${item.category || '기타'}</span>
           ${tags}
           <span class="cat-add-btn" data-add-idx="${idx}" title="개인화 태그 추가">+</span>
-          <span class="sub-price">${fmt(item.price)}</span>
+          <span class="sub-price">${fmtPrice(item)}</span>
         </div>
       </div>`;
     }).join('');
@@ -844,7 +984,7 @@ function renderList() {
           ${dateDisplay}
           <span class="order-id">${order.store === '11st' ? (order.orderId || '') : ''}</span>
         </div>
-        <div class="order-total">${order.items.length > 1 ? order.items.length + '개 · ' : ''}${fmt(totalPrice)}</div>
+        <div class="order-total">${order.items.length > 1 ? order.items.length + '개 · ' : ''}${totalDisplay}</div>
       </div>
       <div class="order-items">${subRows}</div>
     </div>`;
@@ -954,6 +1094,15 @@ function exportCSV() {
 function clearAll() {
   if (!confirm('모든 구매 내역을 삭제할까요?')) return;
   items = []; save(); render(); toast('✓ 초기화 완료');
+}
+
+function clearStore(store) {
+  const NAMES = { coupang: '쿠팡', naver: '네이버', '11st': '11번가', aliexpress: '알리익스프레스' };
+  const count = items.filter(i => i.store === store).length;
+  if (!count) { toast('삭제할 데이터가 없어요'); return; }
+  if (!confirm(`${NAMES[store] || store} 데이터 ${count}건을 삭제할까요?`)) return;
+  items = items.filter(i => i.store !== store);
+  save(); render(); toast(`✓ ${NAMES[store] || store} ${count}건 삭제 완료`);
 }
 
 function refreshCategories() {
@@ -1169,6 +1318,11 @@ function copyGuideCode() {
 
 // ── 유틸 ──────────────────────────────────────────────────────────────────────
 function fmt(p) { return p ? Number(p).toLocaleString('ko-KR') + '원' : '-'; }
+function fmtPrice(item) {
+  if (!item) return '-';
+  if (item.currency === 'USD') return `US $${Number(item.price || 0).toFixed(2)}`;
+  return fmt(item.price);
+}
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function q(sel) { return document.querySelector(sel); }
 function qa(sel) { return document.querySelectorAll(sel); }
