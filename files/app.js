@@ -485,22 +485,55 @@ async function injectCollector(tabId, allPages) {
   return count;
 }
 
-// 알리: 상세 탭에서 상품명 추출
+// 알리: 상세 탭에서 상품 정보 추출
 async function getAliDetailNames(detailUrl) {
   const tab = await chrome.tabs.create({ url: detailUrl, active: false });
   try {
     await waitForTabLoad(tab.id);
-    await new Promise(r => setTimeout(r, 2500)); // React 렌더링 대기
-    const [{ result: names }] = await chrome.scripting.executeScript({
+    await new Promise(r => setTimeout(r, 2500));
+    const [{ result: items }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: () => [...document.querySelectorAll('[data-pl="order_detail_item_title"] a')]
-        .map(a => ({
-          n: a.textContent.trim(),
-          u: a.getAttribute('href') || ''
-        }))
-        .filter(({ n }) => n.length >= 5 && !/구매\s*시|할인/i.test(n))
+      func: () => {
+        return [...document.querySelectorAll('[data-pl="order_detail_item_title"]')].map(wrap => {
+          const a = wrap.querySelector('a');
+          if (!a) return null;
+          let name = a.textContent.trim();
+          if (name.length < 5 || /구매\s*시|할인/i.test(name)) return null;
+          const u = a.getAttribute('href') || '';
+
+          // 가격: es--char 스팬 연결
+          const priceWrap = wrap.closest('[class*="order-detail-item"]')?.querySelector('[class*="es--wrap"]')
+            || wrap.parentElement?.querySelector('[class*="es--wrap"]');
+          let price = 0, currency = 'USD';
+          if (priceWrap) {
+            const raw = [...priceWrap.querySelectorAll('[class*="es--char"]')].map(s => s.textContent).join('').trim();
+            if (/US\s*\$/.test(raw)) {
+              currency = 'USD';
+              const m = raw.replace(/US\s*\$/, '').match(/([\d.]+)/);
+              price = m ? parseFloat(m[1]) : 0;
+            } else if (/[₩￦]/.test(raw)) {
+              currency = 'KRW';
+              const m = raw.replace(/[₩￦,]/g, '').match(/(\d+)/);
+              price = m ? parseInt(m[1]) : 0;
+            }
+          }
+
+          // 수량
+          const qtyEl = wrap.closest('[class*="order-detail-item"]')?.querySelector('.item-price-quantity')
+            || wrap.parentElement?.querySelector('.item-price-quantity');
+          const qty = qtyEl ? (parseInt(qtyEl.textContent.replace(/\D/g, '')) || 1) : 1;
+
+          // 옵션
+          const skuEl = wrap.closest('[class*="order-detail-item"]')?.querySelector('.item-sku-attr')
+            || wrap.parentElement?.querySelector('.item-sku-attr');
+          const sku = skuEl?.textContent.trim() || '';
+
+          if (sku) name = name + ' / ' + sku;
+          return { n: name, u, price, currency, qty };
+        }).filter(Boolean);
+      }
     });
-    return names || [];
+    return items || [];
   } catch (e) { return []; }
   finally { chrome.tabs.remove(tab.id).catch(() => {}); }
 }
@@ -517,29 +550,35 @@ async function processAliDetailQueue(sourceTabId) {
   } catch (e) { return; }
   if (!queue?.length) return;
 
-  const detailCache = new Map(); // detailHref → { names, idx }
+  // detailHref별로 그룹핑
+  const hrefGroups = new Map();
+  for (const qItem of queue) {
+    if (!qItem.detailHref) continue;
+    if (!hrefGroups.has(qItem.detailHref)) hrefGroups.set(qItem.detailHref, []);
+    hrefGroups.get(qItem.detailHref).push(qItem);
+  }
+
   const newItems = [];
 
-  for (const qItem of queue) {
-    const { detailHref, orderId, price, currency, date, url, cancelled } = qItem;
-    if (!detailHref) continue;
+  for (const [detailHref, slots] of hrefGroups) {
+    const detailItems = await getAliDetailNames(detailHref);
+    if (!detailItems?.length) continue;
+    const slot = slots[0]; // orderId, date, cancelled 등은 첫 슬롯 기준
 
-    if (!detailCache.has(detailHref)) {
-      const names = await getAliDetailNames(detailHref);
-      detailCache.set(detailHref, { names, idx: 0 });
+    for (const { n: name, u, price: detailPrice, currency: detailCurrency, qty } of detailItems) {
+      const itemUrl = u ? (u.startsWith('//') ? 'https:' + u : u) : slot.url;
+      // 상세 페이지에서 가격 확보 시 사용, 없으면 슬롯 가격 n등분
+      const price = detailPrice > 0
+        ? Math.round(detailPrice * qty * 100) / 100
+        : Math.round((slot.price / detailItems.length) * 100) / 100;
+      const currency = detailPrice > 0 ? detailCurrency : slot.currency;
+      newItems.push({
+        store: 'aliexpress', name, price, currency,
+        date: slot.date, orderId: slot.orderId, url: itemUrl,
+        category: slot.cancelled ? '취소/반품' : classifyItem(name),
+        collectedAt: new Date().toISOString()
+      });
     }
-    const cache = detailCache.get(detailHref);
-    if (!cache || cache.idx >= cache.names.length) continue;
-
-    const { n: name, u } = cache.names[cache.idx++];
-    const itemUrl = u ? (u.startsWith('//') ? 'https:' + u : u) : url;
-
-    newItems.push({
-      store: 'aliexpress', name, price, currency, date, orderId,
-      url: itemUrl,
-      category: cancelled ? '취소/반품' : classifyItem(name),
-      collectedAt: new Date().toISOString()
-    });
   }
 
   if (newItems.length > 0) {
