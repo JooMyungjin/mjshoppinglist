@@ -11,7 +11,7 @@
   --fg:#e2e2ec;--fg2:#a0a0b4;--fg3:#606074;
   --a:#7c6fef;--a2:#a89df5;--a3:rgba(124,111,239,0.12);
   --ok:#34d399;--err:#f87171;
-  --cp:#e6242a;--nv:#03c75a;--st:#f15a24;--ali:#ff6b35;
+  --cp:#346aff;--nv:#29cf73;--st:#ff0038;--ali:#ff640e;
 }
 @media(prefers-color-scheme:light){
   :root{
@@ -20,7 +20,7 @@
     --fg:#1a1a2e;--fg2:#44445a;--fg3:#8888a4;
     --a:#6c5ce7;--a2:#5a4bd1;--a3:rgba(108,92,231,0.10);
     --ok:#059669;--err:#dc2626;
-    --cp:#c81e24;--nv:#029a47;--st:#d14e1e;--ali:#e85520;
+    --cp:#346aff;--nv:#29cf73;--st:#ff0038;--ali:#ff640e;
   }
   .loader{border-color:rgba(0,0,0,.15);border-top-color:var(--a)}
   .guide-overlay{background:rgba(0,0,0,.5)}
@@ -65,6 +65,7 @@ header{display:flex;align-items:center;justify-content:space-between}
 .chip[data-val="coupang"].on{background:var(--cp);border-color:var(--cp)}
 .chip[data-val="naver"].on{background:var(--nv);border-color:var(--nv)}
 .chip[data-val="11st"].on{background:var(--st);border-color:var(--st)}
+.chip[data-val="aliexpress"].on{background:var(--ali);border-color:var(--ali)}
 .f-input{background:var(--bg4);border:1px solid var(--border);border-radius:6px;color:var(--fg);font-size:11px;padding:4px 8px}
 .f-input:focus{outline:none;border-color:var(--a)}
 .f-input::placeholder{color:var(--fg3)}
@@ -79,10 +80,10 @@ header{display:flex;align-items:center;justify-content:space-between}
 .item-row:hover{background:var(--bg3)}
 .item-row:last-child{border-bottom:none}
 .badge{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;flex-shrink:0}
-.badge.coupang{background:rgba(230,36,42,.15);color:var(--cp)}
-.badge.naver{background:rgba(3,199,90,.15);color:var(--nv)}
-.badge\.11st,.badge[class*="11st"]{background:rgba(241,90,36,.15);color:var(--st)}
-.badge.aliexpress{background:rgba(255,107,53,.15);color:var(--ali)}
+.badge.coupang{background:color-mix(in srgb,var(--cp) 15%,transparent);color:var(--cp)}
+.badge.naver{background:color-mix(in srgb,var(--nv) 15%,transparent);color:var(--nv)}
+.badge\.11st,.badge[class*="11st"]{background:color-mix(in srgb,var(--st) 15%,transparent);color:var(--st)}
+.badge.aliexpress{background:color-mix(in srgb,var(--ali) 15%,transparent);color:var(--ali)}
 .item-info{flex:1;min-width:0}
 .item-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .item-meta{display:flex;align-items:center;gap:6px;margin-top:3px}

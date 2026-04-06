@@ -21,7 +21,8 @@
     "https://api.groq.com/*",
     "https://*.pay.naver.com/*",
     "https://orders.pay.naver.com/*",
-    "https://*.aliexpress.com/*"
+    "https://*.aliexpress.com/*",
+    "https://api.frankfurter.app/*"
   ],
   "background": {
     "service_worker": "background.js"

@@ -4,7 +4,8 @@ let settings = {
   webhookUrl: '', sheetName: '구매내역', autoSync: false,
   lastCollectedAt: null,
   claudeApiKey: '', geminiApiKey: '', groqApiKey: '', aiProvider: 'claude',
-  rules: [], customCategories: []
+  rules: [], customCategories: [],
+  rateCache: {}
 };
 let filters = { store: 'all', cat: 'all', tag: 'all', dateFrom: '', dateTo: '', priceMin: '', priceMax: '', search: '' };
 let currentView = 'list';
@@ -17,6 +18,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setDefaultDates();
   render();
   bindAll();
+  convertUsdItems().then(() => { save(); render(); });
 });
 
 async function load() {
@@ -150,14 +152,24 @@ function bindAll() {
       const added = msg.items.filter(i => !keys.has(i.orderId + '|' + i.name + '|' + i.price));
       if (!added.length) return;
       items = [...added, ...items];
-      save(); render();
+      render();
       toast(`✓ ${added.length}건 수집됨`);
+      convertUsdItems().then(() => { save(); render(); });
     }
   });
 
   // storage 변화 감지
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes.items) { items = changes.items.newValue || []; render(); }
+    if (area === 'local' && changes.items) {
+      const newVal = changes.items.newValue || [];
+      // 외부(background)에서 저장된 경우에만 반영 (priceKrw 없는 USD 아이템이 있을 때)
+      const hasUnconverted = newVal.some(i => i.currency === 'USD' && !i.priceKrw && i.price);
+      items = newVal;
+      render();
+      if (hasUnconverted) {
+        convertUsdItems().then(() => { save(); render(); });
+      }
+    }
   });
 }
 
@@ -984,11 +996,12 @@ function filtered() {
 
 function renderStats() {
   const now = new Date().toISOString().slice(0, 7);
-  const totalOrders = new Set(items.map(i => i.orderId || i.date + '|' + i.store)).size;
-  const monthOrders = new Set(items.filter(i => i.date?.startsWith(now)).map(i => i.orderId || i.date + '|' + i.store)).size;
+  const f = filtered();
+  const totalOrders = new Set(f.map(i => i.orderId || i.date + '|' + i.store)).size;
+  const monthOrders = new Set(f.filter(i => i.date?.startsWith(now)).map(i => i.orderId || i.date + '|' + i.store)).size;
   q('#statTotal').textContent = totalOrders;
   q('#statMonth').textContent = monthOrders;
-  q('#statAmount').textContent = Math.round(items.filter(i => i.category !== '취소/반품').reduce((s, i) => s + (i.price || 0), 0) / 10000);
+  q('#statAmount').textContent = Math.round(f.filter(i => i.category !== '취소/반품').reduce((s, i) => s + (i.currency === 'USD' ? (i.priceKrw || 0) : (i.price || 0)), 0) / 10000);
 }
 
 function renderCounts() {
@@ -1023,7 +1036,10 @@ function renderList() {
     const activeItems = order.items.filter(i => i.category !== '취소/반품');
     const orderCurrency = order.items[0]?.currency;
     const totalPrice = activeItems.reduce((s, i) => s + (i.price || 0), 0);
-    const totalDisplay = orderCurrency === 'USD' ? `US $${totalPrice.toFixed(2)}` : fmt(totalPrice);
+    const krwTotal = activeItems.reduce((s, i) => s + (i.priceKrw || 0), 0);
+    const totalDisplay = orderCurrency === 'USD'
+      ? (krwTotal ? `<span title="US $${totalPrice.toFixed(2)}">${fmt(krwTotal)}</span>` : `US $${totalPrice.toFixed(2)}`)
+      : fmt(totalPrice);
     const isCancelled = order.items.every(i => i.category === '취소/반품');
     const hasDateUnknown = order.items.some(i => i.dateUnknown);
 
@@ -1112,7 +1128,10 @@ function renderChart() {
   const W = 160, cx = W / 2, cy = W / 2, R = 68, r = 42;
 
   const catMap = new Map();
-  f.forEach(i => catMap.set(i.category || '기타', (catMap.get(i.category || '기타') || 0) + (i.price || 0)));
+  f.forEach(i => {
+    const p = i.currency === 'USD' ? (i.priceKrw || 0) : (i.price || 0);
+    catMap.set(i.category || '기타', (catMap.get(i.category || '기타') || 0) + p);
+  });
   const total = [...catMap.values()].reduce((s, v) => s + v, 0);
 
   if (!total) {
@@ -1393,11 +1412,60 @@ function copyGuideCode() {
   });
 }
 
+// ── 환율 변환 ─────────────────────────────────────────────────────────────────
+async function fetchExchangeRate(date) {
+  if (!settings.rateCache) settings.rateCache = {};
+  if (settings.rateCache[date]) return settings.rateCache[date];
+  try {
+    // Frankfurter는 주말/공휴일 데이터가 없으므로 직전 영업일로 자동 처리됨
+    const res = await fetch(`https://api.frankfurter.app/${date}?from=USD&to=KRW`);
+    if (!res.ok) {
+      console.warn('[환율] API 오류', date, res.status);
+      return null;
+    }
+    const data = await res.json();
+    console.log('[환율] 응답', date, data);
+    const rate = data?.rates?.KRW;
+    if (rate) settings.rateCache[date] = rate;
+    return rate || null;
+  } catch (e) {
+    console.warn('[환율] fetch 실패', date, e);
+    return null;
+  }
+}
+
+async function convertUsdItems() {
+  const today = new Date().toISOString().slice(0, 10);
+  const needConvert = items.filter(i => i.currency === 'USD' && !i.priceKrw && i.price);
+  if (!needConvert.length) return;
+  const dates = [...new Set(needConvert.map(i => (i.date || today).slice(0, 10)))];
+  console.log('[환율] dates:', dates);
+  const rates = {};
+  for (const d of dates) {
+    const rate = await fetchExchangeRate(d);
+    console.log('[환율] rate for', d, ':', rate);
+    if (rate) rates[d] = rate;
+  }
+  let changed = false;
+  items.forEach(item => {
+    if (item.currency === 'USD' && !item.priceKrw && item.price) {
+      const d = (item.date || today).slice(0, 10);
+      if (rates[d]) { item.priceKrw = Math.round(item.price * rates[d]); changed = true; }
+    }
+  });
+  console.log('[환율] changed:', changed, 'sample priceKrw:', items.find(i=>i.currency==='USD')?.priceKrw);
+  if (changed) settings.rateCache = { ...settings.rateCache };
+}
+
 // ── 유틸 ──────────────────────────────────────────────────────────────────────
 function fmt(p) { return p ? Number(p).toLocaleString('ko-KR') + '원' : '-'; }
 function fmtPrice(item) {
   if (!item) return '-';
-  if (item.currency === 'USD') return `US $${Number(item.price || 0).toFixed(2)}`;
+  if (item.currency === 'USD') {
+    const usd = `US $${Number(item.price || 0).toFixed(2)}`;
+    if (item.priceKrw) return `<span title="${usd}">${fmt(item.priceKrw)}</span>`;
+    return usd;
+  }
   return fmt(item.price);
 }
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
