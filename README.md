@@ -123,7 +123,7 @@ function doPost(e) {
     const rows = newItems.map(i => [
       i.date || '',
       i.url ? `=HYPERLINK("${i.url}","${(i.name || '').replace(/"/g, '""')}")` : (i.name || ''),
-      i.price || 0,
+      i.currency === 'USD' ? (i.priceKrw || i.price || 0) : (i.price || 0),
       i.category || '',
       (i.tags || []).join(', '),
       i.store || '',
@@ -187,6 +187,13 @@ function doPost(e) {
     rows.forEach((row, i) => {
       if (row[3] === '취소/반품') {
         sheet.getRange(startRow + i, 3).setFontLine('line-through');
+      }
+    });
+
+    // USD 아이템 원달러 가격 셀 노트
+    newItems.forEach((item, i) => {
+      if (item.currency === 'USD' && item.price) {
+        sheet.getRange(startRow + i, 3).setNote(`US $${Number(item.price).toFixed(2)}`);
       }
     });
 

@@ -1105,9 +1105,21 @@ function renderList() {
       </div>`;
     }).join('');
 
+    const orderDetailUrl = (() => {
+      const id = order.orderId;
+      if (!id) return order.items[0]?.url || '';
+      if (order.store === 'coupang') return `https://mc.coupang.com/ssr/desktop/order/${id}`;
+      if (order.store === 'naver') return order.items[0]?.url || '';
+      if (order.store === '11st') return `https://m.11st.co.kr/MW/MyPage/V1/orderDetailV1.tmall?ordNo=${id}`;
+      if (order.store === 'aliexpress') return `https://www.aliexpress.com/p/order/detail.html?orderId=${id}`;
+      return order.items[0]?.url || '';
+    })();
+    const detailLink = orderDetailUrl
+      ? ` <a href="${esc(orderDetailUrl)}" target="_blank" rel="noopener noreferrer" class="order-detail-link">(주문상세)</a>`
+      : '';
     const dateDisplay = hasDateUnknown
       ? `<span class="order-date date-unknown" data-order-key="${order.orderId}" title="클릭해서 날짜 입력">📅 날짜 미확인</span>`
-      : `<span class="order-date">${order.date || ''}</span>`;
+      : `<span class="order-date">${order.date || ''}${detailLink}</span>`;
 
     return `<div class="order-group${isCancelled ? ' cancelled' : ''}">
       <div class="order-head">
@@ -1134,6 +1146,8 @@ async function syncSheet() {
   if (!settings.webhookUrl) { toast('⚠️ Apps Script URL을 먼저 설정해주세요'); q('#settingsPanel').scrollIntoView({ behavior: 'smooth' }); return; }
   q('#btnSync').disabled = true; q('#syncText').textContent = '동기화 중...';
   try {
+    await convertUsdItems();
+    save();
     const r = await chrome.runtime.sendMessage({ action: 'syncToSheet', items, webhookUrl: settings.webhookUrl, sheetName: settings.sheetName || '구매내역' });
     toast(r.ok ? `✓ ${items.length}건 동기화 완료` : '❌ ' + (r.error || '실패'));
   } catch (e) { toast('❌ ' + e.message); }

@@ -123,6 +123,8 @@ header{display:flex;align-items:center;justify-content:space-between}
 .order-head{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--bg3)}
 .order-head-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
 .order-date{font-size:12px;font-weight:600;color:var(--fg)}
+.order-detail-link{font-size:11px;font-weight:400;color:var(--fg3);text-decoration:none;margin-left:4px}
+.order-detail-link:hover{color:var(--a1);text-decoration:underline}
 .date-unknown{color:var(--err);cursor:pointer;font-size:11px}
 .date-unknown:hover{opacity:.8}
 .order-id{font-size:10px;color:var(--fg3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -547,7 +549,7 @@ header{display:flex;align-items:center;justify-content:space-between}
     const rows = newItems.map(i => [
       i.date || '',
       i.url ? `=HYPERLINK("${i.url}","${(i.name || '').replace(/"/g, '""')}")` : (i.name || ''),
-      i.price || 0,
+      i.currency === 'USD' ? (i.priceKrw || i.price || 0) : (i.price || 0),
       i.category || '',
       (i.tags || []).join(', '),
       i.store || '',
@@ -611,6 +613,13 @@ header{display:flex;align-items:center;justify-content:space-between}
     rows.forEach((row, i) => {
       if (row[3] === '취소/반품') {
         sheet.getRange(startRow + i, 3).setFontLine('line-through');
+      }
+    });
+
+    // USD 아이템 원달러 가격 셀 노트
+    newItems.forEach((item, i) => {
+      if (item.currency === 'USD' && item.price) {
+        sheet.getRange(startRow + i, 3).setNote(`US $${Number(item.price).toFixed(2)}`);
       }
     });
 
