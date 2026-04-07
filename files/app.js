@@ -3,7 +3,6 @@ let items = [];
 let settings = {
   webhookUrl: '', sheetName: '구매내역', autoSync: false,
   lastCollectedAt: null,
-  claudeApiKey: '', geminiApiKey: '', groqApiKey: '', aiProvider: 'claude',
   rules: [], customCategories: [],
   rateCache: {}
 };
@@ -27,11 +26,7 @@ async function load() {
   if (s.settings) settings = Object.assign(settings, s.settings);
   q('#webhookUrl').value = settings.webhookUrl || '';
   q('#sheetName').value = settings.sheetName || '';
-  q('#claudeApiKey').value = settings.claudeApiKey || '';
-  q('#geminiApiKey').value = settings.geminiApiKey || '';
-  if (q('#groqApiKey')) q('#groqApiKey').value = settings.groqApiKey || '';
   q('#toggleSyncDot').classList.toggle('on', !!settings.autoSync);
-  setAiProvider(settings.aiProvider || 'claude');
   renderRules();
   renderCustomCatChips();
 }
@@ -128,16 +123,10 @@ function bindAll() {
   });
   q('#sheetStatus').addEventListener('click', () => q('#settingsPanel').scrollIntoView({ behavior: 'smooth' }));
 
-  // AI
-  q('#btnAiClaude').addEventListener('click', () => setAiProvider('claude'));
-  q('#btnAiGemini').addEventListener('click', () => setAiProvider('gemini'));
-  q('#btnAiGroq').addEventListener('click', () => setAiProvider('groq'));
   q('#btnAddRule').addEventListener('click', addRule);
-  q('#btnAutoClassify').addEventListener('click', autoClassify);
 
   // 가이드 모달
   q('#btnGuideSheet').addEventListener('click', () => showGuide('sheet'));
-  q('#btnGuideAi').addEventListener('click', () => showGuide('ai'));
   q('#btnGuideClose').addEventListener('click', closeGuide);
   q('#btnCopyScript').addEventListener('click', copyGuideCode);
   q('#guideOverlay').addEventListener('click', e => { if (e.target === q('#guideOverlay')) closeGuide(); });
@@ -286,9 +275,6 @@ function attachInlineInputEvents(inp, done) {
 function saveSettings() {
   settings.webhookUrl = q('#webhookUrl').value.trim();
   settings.sheetName = q('#sheetName').value.trim() || '구매내역';
-  settings.claudeApiKey = q('#claudeApiKey').value.trim();
-  settings.geminiApiKey = q('#geminiApiKey').value.trim();
-  settings.groqApiKey = q('#groqApiKey')?.value.trim() || '';
   save(); updateStatus();
   toast('✓ 설정이 저장되었습니다');
 }
@@ -1392,56 +1378,6 @@ function applyRules() {
   if (changed) { save(); render(); }
 }
 
-// ── AI 분류 ───────────────────────────────────────────────────────────────────
-function setAiProvider(provider) {
-  settings.aiProvider = provider;
-  ['claude', 'gemini', 'groq'].forEach(p => {
-    const btn = q(`#btnAi${p.charAt(0).toUpperCase() + p.slice(1)}`);
-    const inp = q(`#${p}ApiKey`);
-    if (btn) btn.classList.toggle('on', p === provider);
-    if (inp) inp.style.display = p === provider ? '' : 'none';
-  });
-}
-
-async function autoClassify() {
-  const provider = settings.aiProvider || 'claude';
-  const apiKey = provider === 'gemini' ? (q('#geminiApiKey')?.value.trim() || settings.geminiApiKey)
-    : provider === 'groq' ? (q('#groqApiKey')?.value.trim() || settings.groqApiKey)
-    : (q('#claudeApiKey')?.value.trim() || settings.claudeApiKey);
-  if (!apiKey) { toast('⚠️ API Key를 입력해 주세요'); return; }
-  const unclassified = items.filter(i => !i.category || i.category === '기타');
-  if (!unclassified.length) { toast('분류할 항목이 없어요 (기타 없음)'); return; }
-  const btn = q('#btnAutoClassify');
-  btn.disabled = true; btn.textContent = `⏳ ${unclassified.length}건 분류 중...`;
-  try {
-    const BATCH = 10;
-    const examples = items.filter(i => i.manuallyEdited && i.category && i.category !== '기타').slice(0, 10);
-    for (let i = 0; i < unclassified.length; i += BATCH) {
-      const batch = unclassified.slice(i, i + BATCH);
-      const names = batch.map((item, idx) => `${idx + 1}. ${item.name}`).join('\n');
-      const r = await chrome.runtime.sendMessage({
-        action: provider === 'gemini' ? 'geminiClassify' : provider === 'groq' ? 'groqClassify' : 'claudeClassify',
-        names, apiKey, examples
-      });
-      if (!r.ok) throw new Error(r.error || 'API 오류');
-      let parsed;
-      try {
-        const jm = r.text.replace(/```json|```/g, '').trim().match(/\{[\s\S]*\}/);
-        if (!jm) throw new Error('no json');
-        parsed = JSON.parse(jm[0]);
-      } catch {
-        const CATS = AI_CATEGORIES.concat(['취소/반품']);
-        const cats = [...r.text.matchAll(/"([^"]+)"/g)].map(m => m[1]).filter(s => CATS.includes(s));
-        if (!cats.length) throw new Error('JSON 파싱 실패: ' + r.text.slice(0, 100));
-        parsed = { results: cats };
-      }
-      parsed.results.forEach((cat, idx) => { if (batch[idx] && cat) batch[idx].category = cat; });
-      btn.textContent = `⏳ ${Math.min(i + BATCH, unclassified.length)}/${unclassified.length}건 완료...`;
-    }
-    save(); render(); toast(`✓ ${unclassified.length}건 자동 분류 완료`);
-  } catch (e) { toast('❌ 분류 실패: ' + e.message); console.error(e); }
-  finally { btn.disabled = false; btn.textContent = '🤖 기타 항목 자동 분류'; }
-}
 
 function reclassify() {
   let changed = false;
@@ -1470,9 +1406,8 @@ function reclassifyAll() {
 
 // ── 가이드 모달 ───────────────────────────────────────────────────────────────
 function showGuide(type) {
-  q('#guideSheet').style.display = type === 'sheet' ? '' : 'none';
-  q('#guideAi').style.display = type === 'ai' ? '' : 'none';
-  q('#guideModalTitle').textContent = type === 'sheet' ? '📊 구글 시트 연동 설정' : '🤖 카테고리 AI 분류 설정';
+  q('#guideSheet').style.display = '';
+  q('#guideModalTitle').textContent = '📊 구글 시트 연동 설정';
   q('#guideOverlay').classList.add('show');
 }
 

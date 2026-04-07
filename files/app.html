@@ -457,21 +457,6 @@ header{display:flex;align-items:center;justify-content:space-between}
             </div>
           </div>
           <div>
-            <div class="sgroup-row">
-              <div class="sgroup-title">카테고리 AI 분류</div>
-              <button class="guide-help-btn" id="btnGuideAi">?</button>
-            </div>
-            <div style="display:flex;gap:4px;margin-bottom:4px">
-              <button class="view-btn on" id="btnAiClaude" style="flex:1;font-size:11px">Claude</button>
-              <button class="view-btn" id="btnAiGemini" style="flex:1;font-size:11px">Gemini</button>
-              <button class="view-btn" id="btnAiGroq" style="flex:1;font-size:11px">Groq</button>
-            </div>
-            <input class="s-input" id="claudeApiKey" placeholder="Claude API Key (sk-ant-...)">
-            <input class="s-input" id="geminiApiKey" placeholder="Gemini API Key" style="display:none">
-            <input class="s-input" id="groqApiKey" placeholder="Groq API Key (gsk_...)" style="display:none">
-            <button class="btn btn-primary" id="btnAutoClassify" style="width:100%;margin-top:4px">🤖 기타 항목 자동 분류</button>
-          </div>
-          <div>
             <div class="sgroup-title">카테고리 규칙</div>
             <div class="rule-list" id="ruleList"></div>
             <div class="rule-add">
@@ -652,26 +637,6 @@ header{display:flex;align-items:center;justify-content:space-between}
         <div class="gstep"><div class="gstep-n">8</div><div class="gstep-t">배포 후 표시되는 <strong>웹 앱 URL</strong> 복사<div class="sub">https://script.google.com/macros/s/.../exec 형태</div></div></div>
         <div class="gstep"><div class="gstep-n">9</div><div class="gstep-t">설정의 <strong>Apps Script 웹 앱 URL</strong> 입력란에 붙여넣기</div></div>
         <div class="gstep"><div class="gstep-n">10</div><div class="gstep-t"><strong>저장 및 연결</strong> 버튼 클릭 → 완료!</div></div>
-      </div>
-
-      <!-- AI 분류 가이드 -->
-      <div id="guideAi" style="display:none">
-        <div class="gtip">'기타'로 분류된 항목을 AI가 자동으로 카테고리 분류합니다.<br>아래 세 서비스 중 하나의 API Key를 발급받아 입력하세요.</div>
-        <div class="gsection">Claude (Anthropic) — 가장 정확</div>
-        <div class="gstep"><div class="gstep-n">1</div><div class="gstep-t"><strong>console.anthropic.com</strong> 접속 후 로그인/가입</div></div>
-        <div class="gstep"><div class="gstep-n">2</div><div class="gstep-t">좌측 메뉴 <strong>API Keys → Create Key</strong></div></div>
-        <div class="gstep"><div class="gstep-n">3</div><div class="gstep-t">생성된 키 즉시 복사 <span class="warn-text">(다시 볼 수 없음!)</span><div class="sub">sk-ant-api03-... 형태</div></div></div>
-        <div class="gstep"><div class="gstep-n">4</div><div class="gstep-t">설정에서 <strong>Claude</strong> 탭 선택 후 붙여넣기</div></div>
-        <div class="gsection">Gemini (Google) — 무료 사용 가능</div>
-        <div class="gstep"><div class="gstep-n">1</div><div class="gstep-t"><strong>aistudio.google.com</strong> 접속 (Google 계정 필요)</div></div>
-        <div class="gstep"><div class="gstep-n">2</div><div class="gstep-t">좌측 <strong>Get API Key → Create API Key</strong></div></div>
-        <div class="gstep"><div class="gstep-n">3</div><div class="gstep-t">키 복사 후 설정에서 <strong>Gemini</strong> 탭 선택 후 붙여넣기</div></div>
-        <div class="gsection">Groq — 무료 · 빠른 속도</div>
-        <div class="gstep"><div class="gstep-n">1</div><div class="gstep-t"><strong>console.groq.com</strong> 접속 후 가입</div></div>
-        <div class="gstep"><div class="gstep-n">2</div><div class="gstep-t"><strong>API Keys → Create API Key</strong></div></div>
-        <div class="gstep"><div class="gstep-n">3</div><div class="gstep-t">gsk_... 형태 키 복사 후 설정에서 <strong>Groq</strong> 탭 선택 후 붙여넣기</div></div>
-        <div class="gsection">사용 방법</div>
-        <div class="gstep"><div class="gstep-n">✓</div><div class="gstep-t">API Key 입력 후 <strong>🤖 기타 항목 자동 분류</strong> 버튼 클릭<div class="sub">'기타' 카테고리 항목만 자동으로 분류됩니다</div></div></div>
       </div>
 
     </div>

@@ -139,9 +139,3 @@ function classifyItem(name) {
   }
   return '기타';
 }
-
-// AI 분류용 카테고리 목록 (기타/취소반품 제외)
-const AI_CATEGORIES = CATEGORY_RULES
-  .filter(r => r.name !== '취소/반품')
-  .map(r => r.name)
-  .concat(['기타']);
