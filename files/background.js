@@ -55,8 +55,37 @@ async function handleCollected(newItems) {
   // 자동 동기화
   const { settings = {} } = await chrome.storage.local.get('settings');
   if (settings.autoSync && settings.webhookUrl) {
-    await syncToSheet(merged, settings.webhookUrl, settings.sheetName || '구매내역');
+    const converted = await convertUsdItemsBg(merged, settings);
+    await chrome.storage.local.set({ items: converted, settings });
+    await syncToSheet(converted, settings.webhookUrl, settings.sheetName || '구매내역');
   }
+}
+
+async function convertUsdItemsBg(items, settings) {
+  if (!settings.rateCache) settings.rateCache = {};
+  const today = new Date().toISOString().slice(0, 10);
+  const needConvert = items.filter(i => i.currency === 'USD' && !i.priceKrw && i.price);
+  if (!needConvert.length) return items;
+  const dates = [...new Set(needConvert.map(i => (i.date || today).slice(0, 10)))];
+  const rates = {};
+  for (const d of dates) {
+    if (settings.rateCache[d]) { rates[d] = settings.rateCache[d]; continue; }
+    try {
+      const res = await fetch(`https://api.frankfurter.app/${d}?from=USD&to=KRW`);
+      if (res.ok) {
+        const data = await res.json();
+        const rate = data?.rates?.KRW;
+        if (rate) { rates[d] = rate; settings.rateCache[d] = rate; }
+      }
+    } catch {}
+  }
+  items.forEach(item => {
+    if (item.currency === 'USD' && !item.priceKrw && item.price) {
+      const d = (item.date || today).slice(0, 10);
+      if (rates[d]) item.priceKrw = Math.round(item.price * rates[d]);
+    }
+  });
+  return items;
 }
 
 async function syncToSheet(items, webhookUrl, sheetName = '구매내역') {

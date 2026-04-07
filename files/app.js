@@ -4,7 +4,8 @@ let settings = {
   webhookUrl: '', sheetName: '구매내역', autoSync: false,
   lastCollectedAt: null,
   claudeApiKey: '', geminiApiKey: '', groqApiKey: '', aiProvider: 'claude',
-  rules: [], customCategories: []
+  rules: [], customCategories: [],
+  rateCache: {}
 };
 let filters = { store: 'all', cat: 'all', tag: 'all', dateFrom: '', dateTo: '', priceMin: '', priceMax: '', search: '' };
 let currentView = 'list';
@@ -17,6 +18,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setDefaultDates();
   render();
   bindAll();
+  convertUsdItems().then(() => { save(); render(); });
 });
 
 async function load() {
@@ -41,7 +43,8 @@ const SHOP_PATTERNS = [
   'buy.11st.co.kr', '11st.co.kr/my11st',
   'mc.coupang.com', 'coupang.com/np/orders',
   'orders.pay.naver.com', 'shopping.naver.com/my/order', 'pay.naver.com',
-  '11st.co.kr', 'coupang.com', 'naver.com'
+  'aliexpress.com/p/order',
+  '11st.co.kr', 'coupang.com', 'naver.com', 'aliexpress.com'
 ];
 
 async function findShopTab() {
@@ -109,9 +112,12 @@ function bindAll() {
   q('#btnSync').addEventListener('click', syncSheet);
   q('#btnCSV').addEventListener('click', exportCSV);
   q('#btnClear').addEventListener('click', clearAll);
-  q('#btnRefreshCategories').addEventListener('click', refreshCategories);
+  q('#btnReclassifyAll').addEventListener('click', reclassifyAll);
   q('#btnExportRow').addEventListener('click', exportCSV);
   q('#btnClearRow').addEventListener('click', clearAll);
+  document.querySelectorAll('[data-clear-store]').forEach(btn => {
+    btn.addEventListener('click', () => clearStore(btn.dataset.clearStore));
+  });
 
   // 설정
   q('#btnSaveSettings').addEventListener('click', saveSettings);
@@ -146,19 +152,38 @@ function bindAll() {
       const added = msg.items.filter(i => !keys.has(i.orderId + '|' + i.name + '|' + i.price));
       if (!added.length) return;
       items = [...added, ...items];
-      save(); render();
+      render();
       toast(`✓ ${added.length}건 수집됨`);
+      convertUsdItems().then(() => { save(); render(); });
     }
   });
 
   // storage 변화 감지
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes.items) { items = changes.items.newValue || []; render(); }
+    if (area === 'local' && changes.items) {
+      const newVal = changes.items.newValue || [];
+      // 외부(background)에서 저장된 경우에만 반영 (priceKrw 없는 USD 아이템이 있을 때)
+      const hasUnconverted = newVal.some(i => i.currency === 'USD' && !i.priceKrw && i.price);
+      items = newVal;
+      render();
+      if (hasUnconverted) {
+        convertUsdItems().then(() => { save(); render(); });
+      }
+    }
   });
 }
 
 // ── 목록 클릭 핸들러 ──────────────────────────────────────────────────────────
 function handleListClick(e) {
+  // 개별 상품 삭제
+  const delBtn = e.target.closest('.item-del-btn');
+  if (delBtn) {
+    const idx = +delBtn.dataset.delIdx;
+    items.splice(idx, 1);
+    save(); render();
+    return;
+  }
+
   // 날짜 미확인 클릭 → 수동 입력
   const dateUnknownEl = e.target.closest('.date-unknown');
   if (dateUnknownEl) {
@@ -287,11 +312,15 @@ async function collectAuto() {
   const is11st = tab.url.includes('11st.co.kr');
   const isNaver = tab.url.includes('naver.com');
   const isCoupang = tab.url.includes('coupang.com');
-  if (!is11st && !isNaver && !isCoupang) { toast('⚠️ 현재 전체 자동 수집은 11번가/네이버/쿠팡만 지원해요'); return; }
-  const store = is11st ? '11st' : isNaver ? 'naver' : 'coupang';
+  const isAliexpress = tab.url.includes('aliexpress.com');
+  if (!is11st && !isNaver && !isCoupang && !isAliexpress) { toast('⚠️ 현재 전체 자동 수집은 11번가/네이버/쿠팡/알리익스프레스만 지원해요'); return; }
+  const store = is11st ? '11st' : isNaver ? 'naver' : isCoupang ? 'coupang' : 'aliexpress';
   const btn = q('#btnCollectAuto');
   btn.disabled = true;
-  try { await collectAllYears(tab, store); }
+  try {
+    if (store === 'aliexpress') await collectAllPagesAli(tab);
+    else await collectAllYears(tab, store);
+  }
   finally { btn.disabled = false; btn.textContent = '⟳ 전체 기간 자동 수집'; }
 }
 
@@ -414,12 +443,157 @@ async function collectAllYears(tab, store = '11st') {
   render();
 }
 
+async function collectAllPagesAli(tab) {
+  const btn = q('#btnCollectAuto');
+  showProgress('알리익스프레스 수집 시작...', 0, '');
+
+  // "주문 더 보기" 버튼 반복 클릭
+  let clickCount = 0;
+  while (true) {
+    const [{ result: hasMore }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => !!([...document.querySelectorAll('button')].find(b => /주문 더 보기/.test(b.textContent)))
+    });
+    if (!hasMore) break;
+
+    const [{ result: linksBefore }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => document.querySelectorAll('a[href*="/item/"]').length
+    });
+
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => ([...document.querySelectorAll('button')].find(b => /주문 더 보기/.test(b.textContent)))?.click()
+    });
+
+    await waitForCountIncrease(tab.id, 'a[href*="/item/"]', linksBefore, 8000);
+    clickCount++;
+    showProgress(`더 보기 ${clickCount}회 클릭`, 50, '로딩 중...');
+    btn.textContent = `⏳ 더 보기 ${clickCount}회 클릭 중...`;
+    if (clickCount > 100) break;
+  }
+
+  await new Promise(r => setTimeout(r, 500));
+  const count = await injectCollector(tab.id, false);
+
+  settings.lastCollectedAt = new Date().toISOString();
+  save();
+  showProgress('수집 완료!', 100, `총 ${count}건`);
+  setTimeout(hideProgress, 3000);
+  toast(`✓ 알리익스프레스 수집 완료 — 총 ${count}건`);
+  render();
+}
+
 // ── 수집기 주입 ───────────────────────────────────────────────────────────────
 async function injectCollector(tabId, allPages) {
   await chrome.scripting.executeScript({ target: { tabId }, func: () => { window.__collectResult = null; window.__shopCollecting = false; } });
   await chrome.scripting.executeScript({ target: { tabId }, files: ['categories.js'] });
   await chrome.scripting.executeScript({ target: { tabId }, func: runCollector, args: [allPages] });
-  return pollCollectDone(tabId, 120000);
+  const count = await pollCollectDone(tabId, 120000);
+  await processAliDetailQueue(tabId);
+  return count;
+}
+
+// 알리: 상세 탭에서 상품 정보 추출
+async function getAliDetailNames(detailUrl) {
+  const tab = await chrome.tabs.create({ url: detailUrl, active: false });
+  try {
+    await waitForTabLoad(tab.id);
+    await new Promise(r => setTimeout(r, 2500));
+    const [{ result: items }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        return [...document.querySelectorAll('[data-pl="order_detail_item_title"]')].map(wrap => {
+          const a = wrap.querySelector('a');
+          if (!a) return null;
+          let name = a.textContent.trim();
+          if (name.length < 5 || /구매\s*시|할인/i.test(name)) return null;
+          const u = a.getAttribute('href') || '';
+
+          // 가격: es--char 스팬 연결
+          const priceWrap = wrap.closest('[class*="order-detail-item"]')?.querySelector('[class*="es--wrap"]')
+            || wrap.parentElement?.querySelector('[class*="es--wrap"]');
+          let price = 0, currency = 'USD';
+          if (priceWrap) {
+            const raw = [...priceWrap.querySelectorAll('[class*="es--char"]')].map(s => s.textContent).join('').trim();
+            if (/US\s*\$/.test(raw)) {
+              currency = 'USD';
+              const m = raw.replace(/US\s*\$/, '').match(/([\d.]+)/);
+              price = m ? parseFloat(m[1]) : 0;
+            } else if (/[₩￦]/.test(raw)) {
+              currency = 'KRW';
+              const m = raw.replace(/[₩￦,]/g, '').match(/(\d+)/);
+              price = m ? parseInt(m[1]) : 0;
+            }
+          }
+
+          // 수량
+          const qtyEl = wrap.closest('[class*="order-detail-item"]')?.querySelector('.item-price-quantity')
+            || wrap.parentElement?.querySelector('.item-price-quantity');
+          const qty = qtyEl ? (parseInt(qtyEl.textContent.replace(/\D/g, '')) || 1) : 1;
+
+          // 옵션
+          const skuEl = wrap.closest('[class*="order-detail-item"]')?.querySelector('.item-sku-attr')
+            || wrap.parentElement?.querySelector('.item-sku-attr');
+          const sku = skuEl?.textContent.trim() || '';
+
+          if (sku) name = name + ' / ' + sku;
+          return { n: name, u, price, currency, qty };
+        }).filter(Boolean);
+      }
+    });
+    return items || [];
+  } catch (e) { return []; }
+  finally { chrome.tabs.remove(tab.id).catch(() => {}); }
+}
+
+// 알리: 이름 없는 항목 큐를 상세 탭으로 처리
+async function processAliDetailQueue(sourceTabId) {
+  let queue;
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: sourceTabId },
+      func: () => window.__aliDetailQueue || []
+    });
+    queue = result;
+  } catch (e) { return; }
+  if (!queue?.length) return;
+
+  // detailHref별로 그룹핑
+  const hrefGroups = new Map();
+  for (const qItem of queue) {
+    if (!qItem.detailHref) continue;
+    if (!hrefGroups.has(qItem.detailHref)) hrefGroups.set(qItem.detailHref, []);
+    hrefGroups.get(qItem.detailHref).push(qItem);
+  }
+
+  const newItems = [];
+
+  for (const [detailHref, slots] of hrefGroups) {
+    const detailItems = await getAliDetailNames(detailHref);
+    if (!detailItems?.length) continue;
+    const slot = slots[0]; // orderId, date, cancelled 등은 첫 슬롯 기준
+
+    for (const { n: name, u, price: detailPrice, currency: detailCurrency, qty } of detailItems) {
+      const itemUrl = u ? (u.startsWith('//') ? 'https:' + u : u) : slot.url;
+      // 상세 페이지에서 가격 확보 시 사용, 없으면 슬롯 가격 n등분
+      const price = detailPrice > 0
+        ? Math.round(detailPrice * qty * 100) / 100
+        : Math.round((slot.price / detailItems.length) * 100) / 100;
+      const currency = detailPrice > 0 ? detailCurrency : slot.currency;
+      newItems.push({
+        store: 'aliexpress', name, price, currency,
+        date: slot.date, orderId: slot.orderId, url: itemUrl,
+        category: slot.cancelled ? '취소/반품' : classifyItem(name),
+        collectedAt: new Date().toISOString()
+      });
+    }
+  }
+
+  if (newItems.length > 0) {
+    await chrome.runtime.sendMessage({ action: 'itemsCollected', items: newItems });
+    toast(`✓ 상세 페이지에서 ${newItems.length}건 추가 수집`);
+  }
 }
 
 function pollCollectDone(tabId, timeout) {
@@ -492,6 +666,7 @@ function runCollector(allPages) {
       if (url.includes('11st.co.kr')) collected = await collect11st();
       else if (url.includes('coupang.com')) collected = collectCoupang();
       else if (url.includes('naver.com')) collected = await collectNaver();
+      else if (url.includes('aliexpress.com')) collected = await collectAliexpress();
     } catch (e) { console.error('[collect error]', e.message); }
 
     window.__shopCollecting = false;
@@ -733,6 +908,105 @@ function runCollector(allPages) {
     return null;
   }
 
+  // ── 알리익스프레스 ────────────────────────────────────────────────────────
+  async function collectAliexpress() {
+    await new Promise(r => setTimeout(r, 300));
+    const result = [];
+    window.__aliDetailQueue = []; // 이름 없는 항목 → app.js에서 상세 탭으로 처리
+
+    const priceTotals = [...document.querySelectorAll('[data-pl="order_item_content_price_total"]')];
+
+    for (const priceEl of priceTotals) {
+      // es--char 스팬 조합으로 가격 문자열 재구성
+      const wrap = priceEl.querySelector('[class*="es--wrap"]');
+      if (!wrap) continue;
+      const rawPrice = [...wrap.querySelectorAll('[class*="es--char"]')].map(s => s.textContent).join('').trim();
+
+      let price = 0, currency = 'KRW';
+      if (/US\s*\$/.test(rawPrice)) {
+        currency = 'USD';
+        const m = rawPrice.replace(/US\s*\$/, '').match(/([\d.]+)/);
+        price = m ? parseFloat(m[1]) : 0;
+      } else if (/[₩￦]/.test(rawPrice)) {
+        currency = 'KRW';
+        const m = rawPrice.replace(/[₩￦,]/g, '').match(/(\d+)/);
+        price = m ? parseInt(m[1]) : 0;
+      } else {
+        const m = rawPrice.replace(/,/g, '').match(/(\d+)/);
+        price = m ? parseInt(m[1]) : 0;
+      }
+      if (!price) continue;
+
+      // 주문 컨테이너
+      let orderEl = priceEl.parentElement;
+      for (let i = 0; i < 20; i++) {
+        if (!orderEl) break;
+        if (orderEl.textContent.includes('주문 ID:')) break;
+        orderEl = orderEl.parentElement;
+      }
+      const ctText = (orderEl?.textContent || '').replace(/\s+/g, ' ');
+      const orderIdM = ctText.match(/주문\s*ID[:\s]*(\d{10,})/);
+      const orderId = orderIdM ? orderIdM[1]
+        : 'ali_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+      const korDateM = ctText.match(/주문일[:\s]*(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/);
+      const isoDateM = ctText.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
+      const date = korDateM
+        ? `${korDateM[1]}-${korDateM[2].padStart(2, '0')}-${korDateM[3].padStart(2, '0')}`
+        : isoDateM
+          ? `${isoDateM[1]}-${isoDateM[2].padStart(2, '0')}-${isoDateM[3].padStart(2, '0')}`
+          : new Date().toISOString().slice(0, 10);
+      const cancelled = /취소|cancel|refund|환불/i.test(
+        orderEl?.querySelector('[class*="cancel"],[class*="Cancel"]')?.textContent || ''
+      );
+
+      // 상품 링크 + 이름 탐색
+      let link = null, name = '', url = '';
+      let container = priceEl.parentElement;
+      for (let i = 0; i < 12 && container; i++) {
+        const validLinks = [...container.querySelectorAll('a[href*="/item/"]')].filter(l => {
+          const t = l.querySelector('span[title]')?.getAttribute('title')?.trim() || '';
+          return t.length >= 5 && !/구매\s*시|할인|coupon/i.test(t);
+        });
+        if (validLinks.length === 1) {
+          link = validLinks[0];
+          const ns = link.querySelector('span[title]');
+          name = ns?.getAttribute('title')?.trim() || ns?.textContent.trim() || '';
+          break;
+        }
+        container = container.parentElement;
+      }
+      if (link) {
+        url = link.getAttribute('href') || '';
+        if (url.startsWith('//')) url = 'https:' + url;
+        else if (url.startsWith('/')) url = 'https://www.aliexpress.com' + url;
+      }
+
+      // 옵션명(SKU) 있으면 상품명에 붙이기
+      const sku = container?.querySelector('[data-pl="order_item_content_info_sku"]')?.textContent.trim() || '';
+      if (sku && name) name = name + ' / ' + sku;
+
+      if (name && name.length >= 5 && !/구매\s*시|할인|coupon/i.test(name)) {
+        const key = orderId + '|' + name + '|' + price;
+        if (!result.some(r => r.orderId + '|' + r.name + '|' + r.price === key)) {
+          result.push({
+            store: 'aliexpress', name, price, currency, date, orderId, url,
+            category: cancelled ? '취소/반품' : getCategory(name),
+            collectedAt: new Date().toISOString()
+          });
+        }
+      } else {
+        // 이름 없음 → 상세 페이지 큐에 추가
+        const detailHref = orderEl?.querySelector('a[data-pl="order_item_header_detail"]')?.href || '';
+        if (detailHref) {
+          window.__aliDetailQueue.push({ orderId, price, currency, date, url, cancelled, detailHref });
+        }
+      }
+    }
+
+    window.__aliHasNext = false;
+    return result;
+  }
+
   function getCategory(name) {
     return typeof classifyItem === 'function' ? classifyItem(name) : '기타';
   }
@@ -770,15 +1044,16 @@ function filtered() {
 
 function renderStats() {
   const now = new Date().toISOString().slice(0, 7);
-  const totalOrders = new Set(items.map(i => i.orderId || i.date + '|' + i.store)).size;
-  const monthOrders = new Set(items.filter(i => i.date?.startsWith(now)).map(i => i.orderId || i.date + '|' + i.store)).size;
+  const f = filtered();
+  const totalOrders = new Set(f.map(i => i.orderId || i.date + '|' + i.store)).size;
+  const monthOrders = new Set(f.filter(i => i.date?.startsWith(now)).map(i => i.orderId || i.date + '|' + i.store)).size;
   q('#statTotal').textContent = totalOrders;
   q('#statMonth').textContent = monthOrders;
-  q('#statAmount').textContent = Math.round(items.filter(i => i.category !== '취소/반품').reduce((s, i) => s + (i.price || 0), 0) / 10000);
+  q('#statAmount').textContent = Math.round(f.filter(i => i.category !== '취소/반품').reduce((s, i) => s + (i.currency === 'USD' ? (i.priceKrw || 0) : (i.price || 0)), 0) / 10000);
 }
 
 function renderCounts() {
-  ['coupang', 'naver', '11st'].forEach(s => {
+  ['coupang', 'naver', '11st', 'aliexpress'].forEach(s => {
     const el = q('#cnt-' + s);
     if (el) el.textContent = items.filter(i => i.store === s).length + '건';
   });
@@ -787,7 +1062,7 @@ function renderCounts() {
 function renderList() {
   const list = q('#itemList');
   const f = filtered();
-  const BADGE = { coupang: '쿠', naver: 'N', '11st': '11' };
+  const BADGE = { coupang: '쿠', naver: 'N', '11st': '11', aliexpress: 'Ali' };
   const sq = filters.search;
 
   if (!f.length) {
@@ -806,7 +1081,13 @@ function renderList() {
   const orders = [...orderMap.values()].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   list.innerHTML = orders.map(order => {
-    const totalPrice = order.items.filter(i => i.category !== '취소/반품').reduce((s, i) => s + (i.price || 0), 0);
+    const activeItems = order.items.filter(i => i.category !== '취소/반품');
+    const orderCurrency = order.items[0]?.currency;
+    const totalPrice = activeItems.reduce((s, i) => s + (i.price || 0), 0);
+    const krwTotal = activeItems.reduce((s, i) => s + (i.priceKrw || 0), 0);
+    const totalDisplay = orderCurrency === 'USD'
+      ? (krwTotal ? `<span title="US $${totalPrice.toFixed(2)}">${fmt(krwTotal)}</span>` : `US $${totalPrice.toFixed(2)}`)
+      : fmt(totalPrice);
     const isCancelled = order.items.every(i => i.category === '취소/반품');
     const hasDateUnknown = order.items.some(i => i.dateUnknown);
 
@@ -823,19 +1104,32 @@ function renderList() {
         `<span class="cat-badge tag-badge" data-tag-idx="${idx}" data-tag="${esc(tag)}" title="클릭해서 수정">🏷 ${esc(tag)}<span class="tag-del-btn" data-tag-idx="${idx}" data-tag="${esc(tag)}" title="삭제">×</span></span>`
       ).join('') : '';
       return `<div class="sub-item">
-        <div class="sub-name">${nameHtml}</div>
+        <span class="item-del-btn" data-del-idx="${idx}" title="삭제">×</span>
+        <div class="sub-name" title="${esc(item.name || '')}">${nameHtml}</div>
         <div class="sub-meta">
           <span class="cat-badge" data-idx="${idx}" title="클릭해서 수정">${item.category || '기타'}</span>
           ${tags}
           <span class="cat-add-btn" data-add-idx="${idx}" title="개인화 태그 추가">+</span>
-          <span class="sub-price">${fmt(item.price)}</span>
+          <span class="sub-price">${fmtPrice(item)}</span>
         </div>
       </div>`;
     }).join('');
 
+    const orderDetailUrl = (() => {
+      const id = order.orderId;
+      if (!id) return order.items[0]?.url || '';
+      if (order.store === 'coupang') return `https://mc.coupang.com/ssr/desktop/order/${id}`;
+      if (order.store === 'naver') return order.items[0]?.url || '';
+      if (order.store === '11st') return `https://m.11st.co.kr/MW/MyPage/V1/orderDetailV1.tmall?ordNo=${id}`;
+      if (order.store === 'aliexpress') return `https://www.aliexpress.com/p/order/detail.html?orderId=${id}`;
+      return order.items[0]?.url || '';
+    })();
+    const detailLink = orderDetailUrl
+      ? ` <a href="${esc(orderDetailUrl)}" target="_blank" rel="noopener noreferrer" class="order-detail-link">(주문상세)</a>`
+      : '';
     const dateDisplay = hasDateUnknown
       ? `<span class="order-date date-unknown" data-order-key="${order.orderId}" title="클릭해서 날짜 입력">📅 날짜 미확인</span>`
-      : `<span class="order-date">${order.date || ''}</span>`;
+      : `<span class="order-date">${order.date || ''}${detailLink}</span>`;
 
     return `<div class="order-group${isCancelled ? ' cancelled' : ''}">
       <div class="order-head">
@@ -844,7 +1138,7 @@ function renderList() {
           ${dateDisplay}
           <span class="order-id">${order.store === '11st' ? (order.orderId || '') : ''}</span>
         </div>
-        <div class="order-total">${order.items.length > 1 ? order.items.length + '개 · ' : ''}${fmt(totalPrice)}</div>
+        <div class="order-total">${order.items.length > 1 ? order.items.length + '개 · ' : ''}${totalDisplay}</div>
       </div>
       <div class="order-items">${subRows}</div>
     </div>`;
@@ -862,6 +1156,8 @@ async function syncSheet() {
   if (!settings.webhookUrl) { toast('⚠️ Apps Script URL을 먼저 설정해주세요'); q('#settingsPanel').scrollIntoView({ behavior: 'smooth' }); return; }
   q('#btnSync').disabled = true; q('#syncText').textContent = '동기화 중...';
   try {
+    await convertUsdItems();
+    save();
     const r = await chrome.runtime.sendMessage({ action: 'syncToSheet', items, webhookUrl: settings.webhookUrl, sheetName: settings.sheetName || '구매내역' });
     toast(r.ok ? `✓ ${items.length}건 동기화 완료` : '❌ ' + (r.error || '실패'));
   } catch (e) { toast('❌ ' + e.message); }
@@ -895,7 +1191,10 @@ function renderChart() {
   const W = 160, cx = W / 2, cy = W / 2, R = 68, r = 42;
 
   const catMap = new Map();
-  f.forEach(i => catMap.set(i.category || '기타', (catMap.get(i.category || '기타') || 0) + (i.price || 0)));
+  f.forEach(i => {
+    const p = i.currency === 'USD' ? (i.priceKrw || 0) : (i.price || 0);
+    catMap.set(i.category || '기타', (catMap.get(i.category || '기타') || 0) + p);
+  });
   const total = [...catMap.values()].reduce((s, v) => s + v, 0);
 
   if (!total) {
@@ -954,6 +1253,15 @@ function exportCSV() {
 function clearAll() {
   if (!confirm('모든 구매 내역을 삭제할까요?')) return;
   items = []; save(); render(); toast('✓ 초기화 완료');
+}
+
+function clearStore(store) {
+  const NAMES = { coupang: '쿠팡', naver: '네이버', '11st': '11번가', aliexpress: '알리익스프레스' };
+  const count = items.filter(i => i.store === store).length;
+  if (!count) { toast('삭제할 데이터가 없어요'); return; }
+  if (!confirm(`${NAMES[store] || store} 데이터 ${count}건을 삭제할까요?`)) return;
+  items = items.filter(i => i.store !== store);
+  save(); render(); toast(`✓ ${NAMES[store] || store} ${count}건 삭제 완료`);
 }
 
 function refreshCategories() {
@@ -1146,6 +1454,20 @@ function reclassify() {
   applyRules();
 }
 
+function reclassifyAll() {
+  if (!confirm('수동 편집 내역을 제외한 전체 카테고리를 categories.js 기준으로 재설정할까요?')) return;
+  let changed = 0;
+  items.forEach(item => {
+    if (item.category === '취소/반품' || item.manuallyEdited) return;
+    const c = classifyItem(item.name);
+    item.category = c;
+    changed++;
+  });
+  applyRules();
+  save(); render();
+  toast(`✓ ${changed}건 카테고리 재설정 완료`);
+}
+
 // ── 가이드 모달 ───────────────────────────────────────────────────────────────
 function showGuide(type) {
   q('#guideSheet').style.display = type === 'sheet' ? '' : 'none';
@@ -1167,8 +1489,62 @@ function copyGuideCode() {
   });
 }
 
+// ── 환율 변환 ─────────────────────────────────────────────────────────────────
+async function fetchExchangeRate(date) {
+  if (!settings.rateCache) settings.rateCache = {};
+  if (settings.rateCache[date]) return settings.rateCache[date];
+  try {
+    // Frankfurter는 주말/공휴일 데이터가 없으므로 직전 영업일로 자동 처리됨
+    const res = await fetch(`https://api.frankfurter.app/${date}?from=USD&to=KRW`);
+    if (!res.ok) {
+      console.warn('[환율] API 오류', date, res.status);
+      return null;
+    }
+    const data = await res.json();
+    console.log('[환율] 응답', date, data);
+    const rate = data?.rates?.KRW;
+    if (rate) settings.rateCache[date] = rate;
+    return rate || null;
+  } catch (e) {
+    console.warn('[환율] fetch 실패', date, e);
+    return null;
+  }
+}
+
+async function convertUsdItems() {
+  const today = new Date().toISOString().slice(0, 10);
+  const needConvert = items.filter(i => i.currency === 'USD' && !i.priceKrw && i.price);
+  if (!needConvert.length) return;
+  const dates = [...new Set(needConvert.map(i => (i.date || today).slice(0, 10)))];
+  console.log('[환율] dates:', dates);
+  const rates = {};
+  for (const d of dates) {
+    const rate = await fetchExchangeRate(d);
+    console.log('[환율] rate for', d, ':', rate);
+    if (rate) rates[d] = rate;
+  }
+  let changed = false;
+  items.forEach(item => {
+    if (item.currency === 'USD' && !item.priceKrw && item.price) {
+      const d = (item.date || today).slice(0, 10);
+      if (rates[d]) { item.priceKrw = Math.round(item.price * rates[d]); changed = true; }
+    }
+  });
+  console.log('[환율] changed:', changed, 'sample priceKrw:', items.find(i=>i.currency==='USD')?.priceKrw);
+  if (changed) settings.rateCache = { ...settings.rateCache };
+}
+
 // ── 유틸 ──────────────────────────────────────────────────────────────────────
 function fmt(p) { return p ? Number(p).toLocaleString('ko-KR') + '원' : '-'; }
+function fmtPrice(item) {
+  if (!item) return '-';
+  if (item.currency === 'USD') {
+    const usd = `US $${Number(item.price || 0).toFixed(2)}`;
+    if (item.priceKrw) return `<span title="${usd}">${fmt(item.priceKrw)}</span>`;
+    return usd;
+  }
+  return fmt(item.price);
+}
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function q(sel) { return document.querySelector(sel); }
 function qa(sel) { return document.querySelectorAll(sel); }

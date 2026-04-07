@@ -11,7 +11,7 @@
   --fg:#e2e2ec;--fg2:#a0a0b4;--fg3:#606074;
   --a:#7c6fef;--a2:#a89df5;--a3:rgba(124,111,239,0.12);
   --ok:#34d399;--err:#f87171;
-  --cp:#e6242a;--nv:#03c75a;--st:#f15a24;
+  --cp:#346aff;--nv:#29cf73;--st:#ff0038;--ali:#ff640e;
 }
 @media(prefers-color-scheme:light){
   :root{
@@ -20,7 +20,7 @@
     --fg:#1a1a2e;--fg2:#44445a;--fg3:#8888a4;
     --a:#6c5ce7;--a2:#5a4bd1;--a3:rgba(108,92,231,0.10);
     --ok:#059669;--err:#dc2626;
-    --cp:#c81e24;--nv:#029a47;--st:#d14e1e;
+    --cp:#346aff;--nv:#29cf73;--st:#ff0038;--ali:#ff640e;
   }
   .loader{border-color:rgba(0,0,0,.15);border-top-color:var(--a)}
   .guide-overlay{background:rgba(0,0,0,.5)}
@@ -65,6 +65,7 @@ header{display:flex;align-items:center;justify-content:space-between}
 .chip[data-val="coupang"].on{background:var(--cp);border-color:var(--cp)}
 .chip[data-val="naver"].on{background:var(--nv);border-color:var(--nv)}
 .chip[data-val="11st"].on{background:var(--st);border-color:var(--st)}
+.chip[data-val="aliexpress"].on{background:var(--ali);border-color:var(--ali)}
 .f-input{background:var(--bg4);border:1px solid var(--border);border-radius:6px;color:var(--fg);font-size:11px;padding:4px 8px}
 .f-input:focus{outline:none;border-color:var(--a)}
 .f-input::placeholder{color:var(--fg3)}
@@ -73,15 +74,16 @@ header{display:flex;align-items:center;justify-content:space-between}
 /* ── 목록 ── */
 .list-wrap{border-radius:14px;overflow:hidden;margin-top:10px}
 #itemList{max-height:calc(100vh - 340px);min-height:200px;overflow-y:auto}
-#itemList::-webkit-scrollbar{width:3px}
+#itemList::-webkit-scrollbar{width:6px}
 #itemList::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
 .item-row{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--border);transition:background .1s}
 .item-row:hover{background:var(--bg3)}
 .item-row:last-child{border-bottom:none}
 .badge{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;flex-shrink:0}
-.badge.coupang{background:rgba(230,36,42,.15);color:var(--cp)}
-.badge.naver{background:rgba(3,199,90,.15);color:var(--nv)}
-.badge\.11st,.badge[class*="11st"]{background:rgba(241,90,36,.15);color:var(--st)}
+.badge.coupang{background:color-mix(in srgb,var(--cp) 15%,transparent);color:var(--cp)}
+.badge.naver{background:color-mix(in srgb,var(--nv) 15%,transparent);color:var(--nv)}
+.badge\.11st,.badge[class*="11st"]{background:color-mix(in srgb,var(--st) 15%,transparent);color:var(--st)}
+.badge.aliexpress{background:color-mix(in srgb,var(--ali) 15%,transparent);color:var(--ali)}
 .item-info{flex:1;min-width:0}
 .item-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .item-meta{display:flex;align-items:center;gap:6px;margin-top:3px}
@@ -121,12 +123,16 @@ header{display:flex;align-items:center;justify-content:space-between}
 .order-head{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--bg3)}
 .order-head-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
 .order-date{font-size:12px;font-weight:600;color:var(--fg)}
+.order-detail-link{font-size:11px;font-weight:400;color:var(--fg3);text-decoration:none;margin-left:4px}
+.order-detail-link:hover{color:var(--a1);text-decoration:underline}
 .date-unknown{color:var(--err);cursor:pointer;font-size:11px}
 .date-unknown:hover{opacity:.8}
 .order-id{font-size:10px;color:var(--fg3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .order-total{font-size:13px;font-weight:700;color:var(--fg);white-space:nowrap;flex-shrink:0}
 .order-items{padding:0 16px 8px 16px;display:flex;flex-direction:column;gap:0}
 .sub-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)}
+.item-del-btn{flex-shrink:0;width:16px;height:16px;border-radius:50%;background:transparent;color:var(--fg3);font-size:13px;line-height:16px;text-align:center;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.item-del-btn:hover{background:var(--err);color:#fff}
 .sub-item:last-child{border-bottom:none}
 .sub-name{font-size:12px;color:var(--fg2);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sub-meta{display:flex;align-items:center;gap:6px;flex-shrink:0}
@@ -171,6 +177,8 @@ header{display:flex;align-items:center;justify-content:space-between}
 .site-name{font-size:12px;font-weight:600}
 .site-sub{font-size:10px;color:var(--fg3)}
 .site-cnt{font-size:11px;color:var(--a2);background:var(--a3);padding:2px 7px;border-radius:10px;white-space:nowrap}
+.site-clear{width:16px;height:16px;border-radius:50%;background:none;border:1px solid var(--border);color:var(--fg3);font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;line-height:1;transition:all .12s;margin-left:4px}
+.site-clear:hover{background:var(--err);border-color:var(--err);color:#fff}
 .guide{background:var(--bg3);border-radius:8px;padding:10px 12px}
 .guide-title{font-size:11px;font-weight:700;color:var(--a2);margin-bottom:8px}
 .guide-row{display:flex;gap:7px;margin-bottom:5px;align-items:flex-start}
@@ -284,6 +292,7 @@ header{display:flex;align-items:center;justify-content:space-between}
             <div class="chip" data-filter="store" data-val="coupang">쿠팡</div>
             <div class="chip" data-filter="store" data-val="naver">네이버</div>
             <div class="chip" data-filter="store" data-val="11st">11번가</div>
+            <div class="chip" data-filter="store" data-val="aliexpress">알리</div>
           </div>
         </div>
         <div class="filter-row">
@@ -396,16 +405,25 @@ header{display:flex;align-items:center;justify-content:space-between}
               <div class="dot-sm" style="background:var(--cp)"></div>
               <div class="site-info"><div class="site-name">쿠팡</div><div class="site-sub">마이쿠팡 > 주문목록</div></div>
               <div class="site-cnt" id="cnt-coupang">0건</div>
+              <button class="site-clear" data-clear-store="coupang" title="쿠팡 데이터 삭제">×</button>
             </div>
             <div class="site-row">
               <div class="dot-sm" style="background:var(--nv)"></div>
               <div class="site-info"><div class="site-name">네이버 쇼핑</div><div class="site-sub">쇼핑 > 주문내역</div></div>
               <div class="site-cnt" id="cnt-naver">0건</div>
+              <button class="site-clear" data-clear-store="naver" title="네이버 데이터 삭제">×</button>
             </div>
             <div class="site-row">
               <div class="dot-sm" style="background:var(--st)"></div>
               <div class="site-info"><div class="site-name">11번가</div><div class="site-sub">MY11ST > 주문내역</div></div>
               <div class="site-cnt" id="cnt-11st">0건</div>
+              <button class="site-clear" data-clear-store="11st" title="11번가 데이터 삭제">×</button>
+            </div>
+            <div class="site-row">
+              <div class="dot-sm" style="background:var(--ali)"></div>
+              <div class="site-info"><div class="site-name">알리익스프레스</div><div class="site-sub">My Orders > 주문내역</div></div>
+              <div class="site-cnt" id="cnt-aliexpress">0건</div>
+              <button class="site-clear" data-clear-store="aliexpress" title="알리 데이터 삭제">×</button>
             </div>
           </div>
           <div class="guide">
@@ -464,7 +482,7 @@ header{display:flex;align-items:center;justify-content:space-between}
           </div>
           <div>
             <div class="sgroup-title">데이터</div>
-            <button class="btn" id="btnRefreshCategories" style="width:100%;margin-bottom:6px">🏷️ 카테고리 재분류</button>
+            <button class="btn" id="btnReclassifyAll" style="width:100%;margin-bottom:6px">🔄 전체 카테고리 재분류</button>
             <div class="data-row" id="btnExportRow">
               <span class="toggle-label">CSV 내보내기</span>
               <span style="color:var(--fg3);font-size:11px">↓</span>
@@ -533,7 +551,7 @@ header{display:flex;align-items:center;justify-content:space-between}
     const rows = newItems.map(i => [
       i.date || '',
       i.url ? `=HYPERLINK("${i.url}","${(i.name || '').replace(/"/g, '""')}")` : (i.name || ''),
-      i.price || 0,
+      i.currency === 'USD' ? (i.priceKrw || i.price || 0) : (i.price || 0),
       i.category || '',
       (i.tags || []).join(', '),
       i.store || '',
@@ -597,6 +615,13 @@ header{display:flex;align-items:center;justify-content:space-between}
     rows.forEach((row, i) => {
       if (row[3] === '취소/반품') {
         sheet.getRange(startRow + i, 3).setFontLine('line-through');
+      }
+    });
+
+    // USD 아이템 원달러 가격 셀 노트
+    newItems.forEach((item, i) => {
+      if (item.currency === 'USD' && item.price) {
+        sheet.getRange(startRow + i, 3).setNote(`US $${Number(item.price).toFixed(2)}`);
       }
     });
 
