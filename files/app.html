@@ -131,6 +131,8 @@ header{display:flex;align-items:center;justify-content:space-between}
 .order-total{font-size:13px;font-weight:700;color:var(--fg);white-space:nowrap;flex-shrink:0}
 .order-items{padding:0 16px 8px 16px;display:flex;flex-direction:column;gap:0}
 .sub-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)}
+.item-del-btn{flex-shrink:0;width:16px;height:16px;border-radius:50%;background:transparent;color:var(--fg3);font-size:13px;line-height:16px;text-align:center;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.item-del-btn:hover{background:var(--err);color:#fff}
 .sub-item:last-child{border-bottom:none}
 .sub-name{font-size:12px;color:var(--fg2);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sub-meta{display:flex;align-items:center;gap:6px;flex-shrink:0}
@@ -480,7 +482,7 @@ header{display:flex;align-items:center;justify-content:space-between}
           </div>
           <div>
             <div class="sgroup-title">데이터</div>
-            <button class="btn" id="btnRefreshCategories" style="width:100%;margin-bottom:6px">🏷️ 카테고리 재분류</button>
+            <button class="btn" id="btnReclassifyAll" style="width:100%;margin-bottom:6px">🔄 전체 카테고리 재분류</button>
             <div class="data-row" id="btnExportRow">
               <span class="toggle-label">CSV 내보내기</span>
               <span style="color:var(--fg3);font-size:11px">↓</span>

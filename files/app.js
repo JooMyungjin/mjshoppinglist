@@ -112,7 +112,7 @@ function bindAll() {
   q('#btnSync').addEventListener('click', syncSheet);
   q('#btnCSV').addEventListener('click', exportCSV);
   q('#btnClear').addEventListener('click', clearAll);
-  q('#btnRefreshCategories').addEventListener('click', refreshCategories);
+  q('#btnReclassifyAll').addEventListener('click', reclassifyAll);
   q('#btnExportRow').addEventListener('click', exportCSV);
   q('#btnClearRow').addEventListener('click', clearAll);
   document.querySelectorAll('[data-clear-store]').forEach(btn => {
@@ -175,6 +175,15 @@ function bindAll() {
 
 // ── 목록 클릭 핸들러 ──────────────────────────────────────────────────────────
 function handleListClick(e) {
+  // 개별 상품 삭제
+  const delBtn = e.target.closest('.item-del-btn');
+  if (delBtn) {
+    const idx = +delBtn.dataset.delIdx;
+    items.splice(idx, 1);
+    save(); render();
+    return;
+  }
+
   // 날짜 미확인 클릭 → 수동 입력
   const dateUnknownEl = e.target.closest('.date-unknown');
   if (dateUnknownEl) {
@@ -1095,6 +1104,7 @@ function renderList() {
         `<span class="cat-badge tag-badge" data-tag-idx="${idx}" data-tag="${esc(tag)}" title="클릭해서 수정">🏷 ${esc(tag)}<span class="tag-del-btn" data-tag-idx="${idx}" data-tag="${esc(tag)}" title="삭제">×</span></span>`
       ).join('') : '';
       return `<div class="sub-item">
+        <span class="item-del-btn" data-del-idx="${idx}" title="삭제">×</span>
         <div class="sub-name" title="${esc(item.name || '')}">${nameHtml}</div>
         <div class="sub-meta">
           <span class="cat-badge" data-idx="${idx}" title="클릭해서 수정">${item.category || '기타'}</span>
@@ -1442,6 +1452,20 @@ function reclassify() {
   });
   if (changed) save();
   applyRules();
+}
+
+function reclassifyAll() {
+  if (!confirm('수동 편집 내역을 제외한 전체 카테고리를 categories.js 기준으로 재설정할까요?')) return;
+  let changed = 0;
+  items.forEach(item => {
+    if (item.category === '취소/반품' || item.manuallyEdited) return;
+    const c = classifyItem(item.name);
+    item.category = c;
+    changed++;
+  });
+  applyRules();
+  save(); render();
+  toast(`✓ ${changed}건 카테고리 재설정 완료`);
 }
 
 // ── 가이드 모달 ───────────────────────────────────────────────────────────────
