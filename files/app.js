@@ -299,12 +299,14 @@ async function collectAuto() {
   const isNaver = tab.url.includes('naver.com');
   const isCoupang = tab.url.includes('coupang.com');
   const isAliexpress = tab.url.includes('aliexpress.com');
-  if (!is11st && !isNaver && !isCoupang && !isAliexpress) { toast('⚠️ 현재 전체 자동 수집은 11번가/네이버/쿠팡/알리익스프레스만 지원해요'); return; }
+  if (!is11st && !isNaver && !isCoupang && !isAliexpress) { toast('⚠️ 현재 전체 자동 수집은 11번가/네이버페이/쿠팡/알리익스프레스만 지원해요'); return; }
   const store = is11st ? '11st' : isNaver ? 'naver' : isCoupang ? 'coupang' : 'aliexpress';
   const btn = q('#btnCollectAuto');
   btn.disabled = true;
   try {
     if (store === 'aliexpress') await collectAllPagesAli(tab);
+    else if (tab.url.includes('orders.pay.naver.com')) await collectAllYears(tab, 'naver');
+    else if (tab.url.includes('pay.naver.com')) await collectNaverPayAll(tab);
     else await collectAllYears(tab, store);
   }
   finally { btn.disabled = false; btn.textContent = '⟳ 전체 기간 자동 수집'; }
@@ -467,6 +469,45 @@ async function collectAllPagesAli(tab) {
   showProgress('수집 완료!', 100, `총 ${count}건`);
   setTimeout(hideProgress, 3000);
   toast(`✓ 알리익스프레스 수집 완료 — 총 ${count}건`);
+  render();
+}
+
+async function collectNaverPayAll(tab) {
+  const btn = q('#btnCollectAuto');
+  const startYear = 2020, endYear = new Date().getFullYear();
+  let totalCount = 0, emptyStreak = 0, page = 1;
+  showProgress('네이버페이 수집 시작...', 0, '');
+
+  // pay.naver.com/pc/history?page=N 페이지 순회
+  while (true) {
+    const pct = Math.min((page / 50) * 100, 95);
+    showProgress(`${page}페이지 수집 중`, pct, `누적 ${totalCount}건`);
+    btn.textContent = `⏳ ${page}p (누적 ${totalCount}건)`;
+
+    await chrome.tabs.update(tab.id, { url: `https://pay.naver.com/pc/history?page=${page}` });
+    await waitForTabLoad(tab.id);
+    await new Promise(r => setTimeout(r, 800));
+    await waitForTabContent(tab.id, '[class*="PaymentItem_time"]', 8000);
+
+    const count = await injectCollector(tab.id, false);
+    totalCount += count;
+
+    if (count === 0) {
+      emptyStreak++;
+      if (emptyStreak >= 2) break;
+    } else {
+      emptyStreak = 0;
+    }
+
+    page++;
+    if (page > 200) break;
+  }
+
+  settings.lastCollectedAt = new Date().toISOString();
+  save();
+  showProgress('수집 완료!', 100, `총 ${totalCount}건`);
+  setTimeout(hideProgress, 3000);
+  toast(`✓ 네이버페이 수집 완료 — 총 ${totalCount}건`);
   render();
 }
 
@@ -651,6 +692,9 @@ function runCollector(allPages) {
       const url = location.href;
       if (url.includes('11st.co.kr')) collected = await collect11st();
       else if (url.includes('coupang.com')) collected = collectCoupang();
+      else if (url.includes('orders.pay.naver.com')) collected = await collectNaver();
+      else if (url.includes('pay.naver.com')) collected = await collectNaverPay();
+      else if (url.includes('shopping.naver.com')) collected = await collectNaver();
       else if (url.includes('naver.com')) collected = await collectNaver();
       else if (url.includes('aliexpress.com')) collected = await collectAliexpress();
     } catch (e) { console.error('[collect error]', e.message); }
@@ -854,6 +898,76 @@ function runCollector(allPages) {
         });
       });
     });
+
+    return result;
+  }
+
+  // ── 네이버페이 (pay.naver.com/pc/history) ────────────────────────────────
+  async function collectNaverPay() {
+    await new Promise(r => setTimeout(r, 500));
+    const result = [];
+
+    // 1. 총 N건 펼쳐보기 클릭 — 모든 버튼이 사라질 때까지 대기
+    const expandBtns = [...document.querySelectorAll('[class*="PaymentBundleItem_button-expand"]')];
+    if (expandBtns.length > 0) {
+      expandBtns.forEach(btn => btn.click());
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 200));
+        if (document.querySelectorAll('[class*="PaymentBundleItem_button-expand"]').length === 0) break;
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    // 2. 각 PaymentItem_time 을 기준으로 아이템 수집
+    for (const timeEl of document.querySelectorAll('[class*="PaymentItem_time"]')) {
+      // PaymentItem 컨테이너: 시간 엘리먼트에서 상품명이 나올 때까지 위로 탐색
+      let container = timeEl.parentElement;
+      for (let i = 0; i < 8; i++) {
+        if (!container) break;
+        if (container.querySelector('[class*="ProductNameHighlightByKeyword_article"]')) break;
+        container = container.parentElement;
+      }
+      if (!container) continue;
+
+      // 상태 확인 — 취소/반품/환불/교환완료 제외
+      const status = container.querySelector('[class*="OrderStatus_value"]')?.textContent.trim() || '';
+      if (/취소|반품|환불|교환완료/.test(status)) continue;
+
+      // 상품명
+      const name = container.querySelector('[class*="ProductNameHighlightByKeyword_article"]')?.textContent.trim() || '';
+      if (!name || name.length < 2) continue;
+
+      // 가격 — "5,500원" 형식
+      const priceText = container.querySelector('[class*="PaymentItem_price"]')?.textContent || '';
+      const priceM = priceText.match(/([\d,]+)\s*원/);
+      const price = priceM ? parseInt(priceM[1].replace(/,/g, '')) : 0;
+      if (!price) continue;
+
+      // 날짜+시간 파싱 — "4. 13. 13:43 결제" or "2025. 4. 13. 13:43 결제"
+      const rawDate = timeEl.textContent.replace(/결제일시/, '').replace(/결제\s*$/, '').trim();
+      // 연도 포함 패턴
+      const dm4 = rawDate.match(/(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})/);
+      // 월.일. 패턴
+      const dm2 = rawDate.match(/(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{2}:\d{2})/);
+      let date;
+      if (dm4) {
+        date = `${dm4[1]}-${dm4[2].padStart(2, '0')}-${dm4[3].padStart(2, '0')}`;
+      } else if (dm2) {
+        date = `${new Date().getFullYear()}-${dm2[1].padStart(2, '0')}-${dm2[2].padStart(2, '0')}`;
+      } else continue;
+
+      // orderId: 날짜+시간 기반 (네이버쇼핑과 동일 방식)
+      const orderId = 'nvp_' + rawDate.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.:]/g, '');
+
+      const url = container.querySelector('a')?.href || '';
+
+      if (result.some(r => r.orderId === orderId && r.name === name && r.price === price)) continue;
+      result.push({
+        store: 'naver', name, price, date, orderId, url,
+        category: getCategory(name),
+        collectedAt: new Date().toISOString()
+      });
+    }
 
     return result;
   }
@@ -1242,7 +1356,7 @@ function clearAll() {
 }
 
 function clearStore(store) {
-  const NAMES = { coupang: '쿠팡', naver: '네이버', '11st': '11번가', aliexpress: '알리익스프레스' };
+  const NAMES = { coupang: '쿠팡', naver: '네이버페이', '11st': '11번가', aliexpress: '알리익스프레스' };
   const count = items.filter(i => i.store === store).length;
   if (!count) { toast('삭제할 데이터가 없어요'); return; }
   if (!confirm(`${NAMES[store] || store} 데이터 ${count}건을 삭제할까요?`)) return;

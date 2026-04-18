@@ -28,7 +28,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 async function handleCollected(newItems) {
   const { items = [] } = await chrome.storage.local.get('items');
   const keys = new Set(items.map(i => i.orderId + '|' + i.name + '|' + i.price));
-  const added = newItems.filter(i => !keys.has(i.orderId + '|' + i.name + '|' + i.price));
+  // 네이버: 쇼핑과 페이 간 크로스소스 중복 방지 (orderId 다르더라도 name+price+date 동일 시 제외)
+  const naverKeys = new Set(
+    items.filter(i => i.store === 'naver').map(i => `${i.name}|${i.price}|${i.date}`)
+  );
+  const added = newItems.filter(i => {
+    if (keys.has(i.orderId + '|' + i.name + '|' + i.price)) return false;
+    if (i.store === 'naver' && naverKeys.has(`${i.name}|${i.price}|${i.date}`)) return false;
+    return true;
+  });
   if (!added.length) return;
   const merged = [...added, ...items];
   await chrome.storage.local.set({ items: merged });
